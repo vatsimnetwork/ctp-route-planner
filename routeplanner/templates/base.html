@@ -1,0 +1,240 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTP | Route Planner</title>
+    <script>
+        (function () {
+            var key = 'ctp-theme';
+            var stored = localStorage.getItem(key);
+            var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+            var theme = (stored === 'light' || stored === 'dark') ? stored : (prefersDark ? 'dark' : 'light');
+            document.documentElement.setAttribute('data-theme', theme);
+        })();
+    </script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="icon" type="image/png" href="{% static 'imgs/ctp_discord.png' %}">
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Ubuntu:ital,wght@0,300;0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --vatsim-blue: #2a3b90;
+            --text-gray: #4a5568;
+            --app-bg: #f4f7fb;
+            --surface-bg: #ffffff;
+            --surface-border: #e9ecef;
+            --text-color: #1f2937;
+            --muted-text: #4a5568;
+            --toggle-bg: #f1f5f9;
+            --toggle-border: #cbd5e1;
+            --toggle-text: #1f2937;
+            --toggle-hover: #e2e8f0;
+        }
+
+        html[data-theme='dark'] {
+            --app-bg: #0b0f14;
+            --surface-bg: #141a23;
+            --surface-border: #263244;
+            --text-color: #e5e7eb;
+            --muted-text: #a3afbf;
+            --toggle-bg: #1e293b;
+            --toggle-border: #334155;
+            --toggle-text: #e2e8f0;
+            --toggle-hover: #293548;
+        }
+
+        body {
+            font-family: 'Ubuntu', sans-serif;
+            background: var(--app-bg);
+            color: var(--text-color);
+            transition: background-color 180ms ease, color 180ms ease;
+        }
+
+        .app-navbar {
+            min-height: 88px;
+            padding: 0.85rem 0;
+            background: var(--surface-bg);
+            border-bottom: 1px solid var(--surface-border);
+            transition: background-color 180ms ease, border-color 180ms ease;
+        }
+
+        .app-navbar .navbar-brand img {
+            height: 52px;
+            width: auto;
+        }
+
+        .app-navbar .navbar-brand h4 {
+            margin: 0;
+            color: var(--text-color);
+        }
+
+        .app-navbar .nav-link {
+            font-size: 1.05rem;
+            font-weight: 500;
+            padding: 0.4rem 0.9rem;
+            color: var(--text-color);
+        }
+
+        .app-navbar .navbar-toggler {
+            border-color: rgba(42, 59, 144, 0.25);
+        }
+
+        .app-navbar .navbar-toggler-icon {
+            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='rgba%2842, 59, 144, 0.9%29' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e");
+        }
+
+        .theme-toggle-btn {
+            border: 1px solid var(--toggle-border);
+            background: var(--toggle-bg);
+            color: var(--toggle-text);
+            border-radius: 999px;
+            width: 42px;
+            height: 42px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.9rem;
+            line-height: 1.2;
+            cursor: pointer;
+            transition: background-color 180ms ease, border-color 180ms ease, color 180ms ease;
+        }
+
+        .theme-toggle-btn:hover {
+            background: var(--toggle-hover);
+        }
+
+        .theme-toggle-btn .icon {
+            width: 20px;
+            height: 20px;
+            stroke: currentColor;
+            fill: none;
+            stroke-width: 1.8;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
+        .theme-toggle-btn .icon-moon {
+            display: none;
+        }
+
+        html[data-theme='dark'] .theme-toggle-btn .icon-sun {
+            display: none;
+        }
+
+        html[data-theme='dark'] .theme-toggle-btn .icon-moon {
+            display: block;
+        }
+
+        @media (max-width: 991.98px) {
+            .app-navbar {
+                min-height: 72px;
+                padding: 0.6rem 0;
+            }
+
+            .app-navbar .navbar-brand img {
+                height: 42px;
+            }
+
+            .app-navbar .navbar-collapse {
+                margin-top: 0.75rem;
+                padding-top: 0.75rem;
+                border-top: 1px solid var(--surface-border);
+            }
+
+            .app-navbar .nav-link {
+                padding: 0.55rem 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg app-navbar">
+        <div class="container">
+            <a class="navbar-brand" href="/">
+                <h4>CTP Route Planner</h4>
+            </a>
+
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            
+            <div class="collapse navbar-collapse justify-content-end" id="navbarNav">
+                <ul class="navbar-nav">
+                    <li class="nav-item d-flex align-items-center me-3">
+                        <button id="theme-toggle" class="theme-toggle-btn" type="button" aria-pressed="false" aria-label="Switch to dark mode" title="Theme umschalten">
+                            <svg class="icon icon-sun" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <circle cx="12" cy="12" r="4"></circle>
+                                <path d="M12 2v2.5M12 19.5V22M4.93 4.93l1.77 1.77M17.3 17.3l1.77 1.77M2 12h2.5M19.5 12H22M4.93 19.07l1.77-1.77M17.3 6.7l1.77-1.77"></path>
+                            </svg>
+                            <svg class="icon icon-moon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="M20.35 14.14A9 9 0 1 1 9.86 3.65 7 7 0 0 0 20.35 14.14z"></path>
+                            </svg>
+                        </button>
+                    </li>
+                    {% if request.is_session_valid %}
+                        <li class="nav-item"><a class="nav-link" href="/routeplotter">Route Plotter</a></li>
+                        <li class="nav-item"><a class="nav-link fw-bold text-primary" href="/auth/logout/">Logout</a></li>
+                    {% else %}
+                        <li class="nav-item"><a class="nav-link fw-bold text-primary" href="/auth/login/">Login</a></li>
+                    {% endif %}
+                </ul>
+            </div>
+        </div>
+    </nav>
+    {% block content %}
+    {% endblock %}
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        (function () {
+            var key = 'ctp-theme';
+            var button = document.getElementById('theme-toggle');
+            if (!button) {
+                return;
+            }
+
+            function readSystemTheme() {
+                return (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+            }
+
+            function applyTheme(theme, persist) {
+                document.documentElement.setAttribute('data-theme', theme);
+                if (persist) {
+                    localStorage.setItem(key, theme);
+                }
+                button.setAttribute('aria-pressed', theme === 'dark' ? 'true' : 'false');
+                button.setAttribute('aria-label', theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
+                window.dispatchEvent(new CustomEvent('themechange', { detail: { theme: theme } }));
+            }
+
+            var stored = localStorage.getItem(key);
+            var current = (stored === 'light' || stored === 'dark') ? stored : readSystemTheme();
+            applyTheme(current, false);
+
+            button.addEventListener('click', function () {
+                var next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+                applyTheme(next, true);
+            });
+
+            if (window.matchMedia) {
+                var mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+                var updateFromSystem = function (event) {
+                    var manualTheme = localStorage.getItem(key);
+                    if (manualTheme !== 'light' && manualTheme !== 'dark') {
+                        applyTheme(event.matches ? 'dark' : 'light', false);
+                    }
+                };
+                if (mediaQuery.addEventListener) {
+                    mediaQuery.addEventListener('change', updateFromSystem);
+                } else if (mediaQuery.addListener) {
+                    mediaQuery.addListener(updateFromSystem);
+                }
+            }
+        })();
+    </script>
+</body>
+</html>

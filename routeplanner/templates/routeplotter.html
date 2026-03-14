@@ -1,0 +1,172 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v8.2.0/ol.css">
+
+<div id="container" class="mx-5">
+    <div id="route-div">
+        </div>
+    
+    <div id="map-div" class="mx-5">
+        <div id="map-controls">
+            <div class="control-header">NAV DISPLAY</div>
+            <div class="form-check">
+                <input type="checkbox" id="toggle-sectors" checked>
+                <label for="toggle-sectors">FIR Boundaries</label>
+            </div>
+            <div class="form-check">
+                <input type="checkbox" id="toggle-waypoints" checked>
+                <label for="toggle-waypoints">Waypoints</label>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/ol@v8.2.0/dist/ol.js"></script>
+
+<script>
+    function tileUrlForTheme(theme) {
+        return theme === 'dark'
+            ? 'https://{a-c}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+            : 'https://{a-c}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
+    }
+
+    const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+    const baseLayer = new ol.layer.Tile({
+        source: new ol.source.XYZ({
+            url: tileUrlForTheme(currentTheme)
+        })
+    });
+
+    const map = new ol.Map({
+        target: 'map-div',
+        layers: [baseLayer],
+        view: new ol.View({
+            center: ol.proj.fromLonLat([-30, 40]),  //where the start center of the map is
+            zoom: 1
+        })
+    });
+
+    const firLayer = new ol.layer.Vector({
+        source: new ol.source.Vector({
+            url: '/routeplotter/getfirs/', 
+            format: new ol.format.GeoJSON()
+        }),
+        style: new ol.style.Style({
+            stroke: new ol.style.Stroke({
+                color: '#00ffcc',
+                width: 1
+            })
+        })
+    });
+    map.addLayer(firLayer);
+
+    const waypointSource = new ol.source.Vector();
+    const waypointLayer = new ol.layer.Vector({ 
+        source: waypointSource,
+        zIndex: 10
+    });
+    map.addLayer(waypointLayer);
+
+    document.getElementById('toggle-sectors').addEventListener('change', function() {
+        firLayer.setVisible(this.checked);
+    });
+
+    document.getElementById('toggle-waypoints').addEventListener('change', function() {
+        waypointLayer.setVisible(this.checked);
+    });
+
+    function addWaypoint(lon, lat, name) {
+        const feature = new ol.Feature({
+            geometry: new ol.geom.Point(ol.proj.fromLonLat([lon, lat])),
+            name: name
+        });
+        feature.setStyle(new ol.style.Style({
+            image: new ol.style.Circle({
+                radius: 4,
+                fill: new ol.style.Fill({color: '#00ffff'}),
+                stroke: new ol.style.Stroke({color: 'white', width: 1})
+            }),
+            text: new ol.style.Text({
+                text: name,
+                offsetY: -15,
+                fill: new ol.style.Fill({color: '#fff'}),
+                font: 'bold 10px monospace',
+                stroke: new ol.style.Stroke({color: '#000', width: 2})
+            })
+        }));
+        waypointSource.addFeature(feature);
+    }
+
+    addWaypoint(9.5317, 50.1175, "SPESA"); //for example
+
+    window.addEventListener('themechange', function (event) {
+        const theme = event.detail && event.detail.theme ? event.detail.theme : 'light';
+        baseLayer.setSource(new ol.source.XYZ({
+            url: tileUrlForTheme(theme)
+        }));
+    });
+</script>
+
+<style>
+    #map-div {
+        position: absolute;
+        width: 60%; height: 80%;
+        right: 0; top: 50%;
+        transform: translateY(-50%);
+        background-color: #f8fafc;
+        border: 1px solid #d0d7e2;
+        border-radius: 10px;
+        overflow: hidden;
+    }
+    #map-controls {
+        position: absolute;
+        bottom: 20px; right: 20px;
+        background: rgba(248, 250, 252, 0.95);
+        color: #1f2937;
+        padding: 15px;
+        border: 1px solid #cbd5e1;
+        border-radius: 2px;
+        z-index: 1000;
+        font-family: 'Courier New', monospace;
+        font-size: 11px;
+    }
+    .control-header {
+        border-bottom: 1px dashed #64748b;
+        margin-bottom: 10px;
+        letter-spacing: 2px;
+    }
+    #route-div {
+        position: absolute;
+        background-color: rgba(255, 255, 255, 0.92);
+        color: #1f2937;
+        width: 30%; height: 60%;
+        top: 50%; left: 5%;
+        transform: translateY(-50%);
+        padding: 30px;
+        border: 1px solid #d0d7e2;
+        border-radius: 10px;
+    }
+
+    html[data-theme='dark'] #map-div {
+        background-color: #000;
+        border-color: #333;
+    }
+
+    html[data-theme='dark'] #map-controls {
+        background: rgba(10, 10, 10, 0.9);
+        color: #00ffcc;
+        border-color: #00ffcc;
+    }
+
+    html[data-theme='dark'] .control-header {
+        border-bottom-color: #00ffcc;
+    }
+
+    html[data-theme='dark'] #route-div {
+        background-color: rgba(20, 20, 20, 0.9);
+        color: #ddd;
+        border-color: #444;
+    }
+</style>
+{% endblock %}
