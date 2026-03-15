@@ -8,25 +8,25 @@ class Location(models.Model):
     latitude = models.FloatField()
 
 
-class Airway(models.Model):
-    identifier = models.CharField(max_length=10, primary_key=True)
-    waypoints = models.ManyToManyField(
-        Location, 
-        through='AirwayWaypoint',
-        related_name='airways'
-    )
+#class Airway(models.Model):
+#    identifier = models.CharField(max_length=10, primary_key=True)
+#    waypoints = models.ManyToManyField(
+#        Location, 
+#        through='AirwayWaypoint',
+#        related_name='airways'
+#    )
 
-    def __str__(self):
-        return self.identifier
+#    def __str__(self):
+#        return self.identifier
 
-class AirwayWaypoint(models.Model):
-    airway = models.ForeignKey(Airway, on_delete=models.CASCADE)
-    waypoint = models.ForeignKey(Location, on_delete=models.CASCADE)
-    order = models.PositiveIntegerField()
-
-    class Meta:
-        ordering = ['order']
-        unique_together = ('airway', 'order')
+#class AirwayWaypoint(models.Model):
+#    airway = models.ForeignKey(Airway, on_delete=models.CASCADE)
+#    waypoint = models.ForeignKey(Location, on_delete=models.CASCADE)
+#    order = models.PositiveIntegerField()
+#
+#    class Meta:
+#        ordering = ['order']
+#        unique_together = ('airway', 'order')
 
 
 

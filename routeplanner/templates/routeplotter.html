@@ -5,17 +5,29 @@
 
 <div id="container" class="mx-5">
     <div id="route-div">
+        
+            
+        <div class="form-group">
+            <label for="routeInput">Route Input</label>
+            <textarea class="form-control" id="routeInput" name="route_data" rows="15"></textarea>
+            <div id="routeInputError" class="text-danger small mt-2" style="display: none;"></div>
         </div>
+        <button  id="plot_route" class="btn btn-primary mt-2">Plot Route</button>
+        <button  id="clear_route" class="btn btn-secondary mt-2">Save Route</button>
+        <button  id="load_route" class="btn btn-secondary mt-2">Load Route</button>
+
+        
+    </div>
     
     <div id="map-div" class="mx-5">
         <div id="map-controls">
-            <div class="control-header">NAV DISPLAY</div>
+            <div class="control-header">Layers</div>
             <div class="form-check">
                 <input type="checkbox" id="toggle-sectors" checked>
                 <label for="toggle-sectors">FIR Boundaries</label>
             </div>
             <div class="form-check">
-                <input type="checkbox" id="toggle-waypoints" checked>
+                <input type="checkbox" id="toggle-waypoints" >
                 <label for="toggle-waypoints">Waypoints</label>
             </div>
         </div>
@@ -27,11 +39,52 @@
 <script>
     function tileUrlForTheme(theme) {
         return theme === 'dark'
-            ? 'https://{a-c}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
-            : 'https://{a-c}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
+            ? 'https://{a-c}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png'
+            : 'https://{a-c}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png';
+    }
+
+    function waypointPaletteForTheme(theme) {
+        return theme === 'dark'
+            ? { point: '#ffffff', text: '#ffffff', textStroke: '#000000' }
+            : { point: '#0f172a', text: '#111827', textStroke: '#ffffff' };
+    }
+
+    const WAYPOINT_POINT_MIN_ZOOM = 6;
+    const WAYPOINT_LABEL_MIN_ZOOM = 8;
+
+    function createWaypointPointStyle(palette) {
+        return new ol.style.Style({
+            image: new ol.style.Circle({
+                radius: 1,
+                fill: new ol.style.Fill({ color: palette.point }),
+                stroke: new ol.style.Stroke({ color: palette.point, width: 1 }),
+                opacity: 0.8
+            })
+        });
     }
 
     const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+    let waypointPalette = waypointPaletteForTheme(currentTheme);
+    let allWaypointsPointStyle = createWaypointPointStyle(waypointPalette);
+    const waypointLabelStyleCache = new Map();
+
+    function getWaypointLabelStyle(identifier) {
+        let style = waypointLabelStyleCache.get(identifier);
+        if (style) return style;
+
+        style = new ol.style.Style({
+            text: new ol.style.Text({
+                text: identifier,
+                offsetY: -6,
+                fill: new ol.style.Fill({ color: waypointPalette.text }),
+                font: 'bold 9px monospace',
+                stroke: new ol.style.Stroke({ color: waypointPalette.textStroke, width: 1, opacity: 0.9 })
+            })
+        });
+        waypointLabelStyleCache.set(identifier, style);
+        return style;
+    }
+
     const baseLayer = new ol.layer.Tile({
         source: new ol.source.XYZ({
             url: tileUrlForTheme(currentTheme)
@@ -42,24 +95,127 @@
         target: 'map-div',
         layers: [baseLayer],
         view: new ol.View({
-            center: ol.proj.fromLonLat([-30, 40]),  //where the start center of the map is
+            center: ol.proj.fromLonLat([-30, 40]),
             zoom: 1
         })
     });
 
+    const firSource = new ol.source.Vector({
+        url: '/routeplotter/getfirs/', 
+        format: new ol.format.GeoJSON()
+    });
+
+    function createWaypointsSource() {
+        return new ol.source.Vector();
+    }
+
+    let allWaypointsSource = createWaypointsSource();
+    let waypointFetchController = null;
+
+
+    // layer for the fir boundaries
     const firLayer = new ol.layer.Vector({
-        source: new ol.source.Vector({
-            url: '/routeplotter/getfirs/', 
-            format: new ol.format.GeoJSON()
-        }),
+        source: firSource,
         style: new ol.style.Style({
             stroke: new ol.style.Stroke({
                 color: '#00ffcc',
-                width: 1
+                width: 0.1,
+                opacity: 0.5
             })
         })
     });
+
+    //layer for the firlabels
+    const firLabelLayer = new ol.layer.Vector({
+        source: firSource,
+        declutter: true,
+        style: function(feature) {
+            const props = feature.getProperties();
+            const lon = props.label_lon;
+            const lat = props.label_lat;
+            const identifier = props.id || props.name;
+
+            if (!lon || !lat || !identifier) return null;
+
+            return new ol.style.Style({
+                geometry: new ol.geom.Point(ol.proj.fromLonLat([lon, lat])),
+                text: new ol.style.Text({
+                    text: identifier,
+                    font: 'bold 10px monospace',
+                    fill: new ol.style.Fill({ color: 'rgba(0, 255, 204, 0.6)' }),
+                    stroke: new ol.style.Stroke({ color: 'rgba(0, 0, 0, 0.45)', width: 1 }),
+                    textAlign: 'center',
+                    
+                })
+            });
+        }
+    });
+
     map.addLayer(firLayer);
+    map.addLayer(firLabelLayer);
+
+    const allWaypointsLayer = new ol.layer.Vector({
+        source: allWaypointsSource,
+        zIndex: 8,
+        style: allWaypointsPointStyle
+    });
+
+    const allWaypointsLabelLayer = new ol.layer.Vector({
+        source: allWaypointsSource,
+        declutter: true,
+        zIndex: 9,
+        style: function(feature) {
+            const identifier = feature.get('identifier');
+            if (!identifier) return null;
+            return getWaypointLabelStyle(identifier);
+        }
+    });
+
+    map.addLayer(allWaypointsLayer);
+    map.addLayer(allWaypointsLabelLayer);
+
+    function replaceWaypointsSource() {
+        allWaypointsSource = createWaypointsSource();
+        allWaypointsLayer.setSource(allWaypointsSource);
+        allWaypointsLabelLayer.setSource(allWaypointsSource);
+    }
+
+    function loadVisibleWaypoints() {
+        if (waypointFetchController) waypointFetchController.abort();
+
+        const enabled = document.getElementById('toggle-waypoints').checked;
+        const zoom = map.getView().getZoom() || 0;
+        const showPoints = enabled && zoom >= WAYPOINT_POINT_MIN_ZOOM;
+        const showLabels = enabled && zoom >= WAYPOINT_LABEL_MIN_ZOOM;
+
+        allWaypointsLayer.setVisible(showPoints);
+        allWaypointsLabelLayer.setVisible(showLabels);
+
+        if (!showPoints) {
+            allWaypointsSource.clear();
+            return;
+        }
+
+        const extent = map.getView().calculateExtent(map.getSize());
+        const [minX, minY, maxX, maxY] = extent;
+        const [minLon, minLat] = ol.proj.toLonLat([minX, minY]);
+        const [maxLon, maxLat] = ol.proj.toLonLat([maxX, maxY]);
+
+        waypointFetchController = new AbortController();
+        fetch(
+            `/routeplotter/getwaypoints/?minLon=${minLon}&minLat=${minLat}&maxLon=${maxLon}&maxLat=${maxLat}`,
+            { signal: waypointFetchController.signal }
+        )
+            .then(r => r.json())
+            .then(data => {
+                const features = new ol.format.GeoJSON().readFeatures(data, { featureProjection: 'EPSG:3857' });
+                allWaypointsSource.clear();
+                allWaypointsSource.addFeatures(features);
+            })
+            .catch(() => {});
+    }
+
+    map.on('moveend', loadVisibleWaypoints);
 
     const waypointSource = new ol.source.Vector();
     const waypointLayer = new ol.layer.Vector({ 
@@ -69,11 +225,13 @@
     map.addLayer(waypointLayer);
 
     document.getElementById('toggle-sectors').addEventListener('change', function() {
-        firLayer.setVisible(this.checked);
+        const visible = this.checked;
+        firLayer.setVisible(visible);
+        firLabelLayer.setVisible(visible);
     });
 
     document.getElementById('toggle-waypoints').addEventListener('change', function() {
-        waypointLayer.setVisible(this.checked);
+        loadVisibleWaypoints();
     });
 
     function addWaypoint(lon, lat, name) {
@@ -83,29 +241,143 @@
         });
         feature.setStyle(new ol.style.Style({
             image: new ol.style.Circle({
-                radius: 4,
-                fill: new ol.style.Fill({color: '#00ffff'}),
+                radius: 3,
+                fill: new ol.style.Fill({color: 'white'}),
                 stroke: new ol.style.Stroke({color: 'white', width: 1})
             }),
             text: new ol.style.Text({
                 text: name,
-                offsetY: -15,
+                offsetY: -8,
                 fill: new ol.style.Fill({color: '#fff'}),
-                font: 'bold 10px monospace',
-                stroke: new ol.style.Stroke({color: '#000', width: 2})
+                font: 'bold 9px monospace',
+                stroke: new ol.style.Stroke({color: '#000', width: 1, opacity: 0.7})
             })
         }));
         waypointSource.addFeature(feature);
     }
 
-    addWaypoint(9.5317, 50.1175, "SPESA"); //for example
+    
 
     window.addEventListener('themechange', function (event) {
         const theme = event.detail && event.detail.theme ? event.detail.theme : 'light';
+        waypointPalette = waypointPaletteForTheme(theme);
+        allWaypointsPointStyle = createWaypointPointStyle(waypointPalette);
+        waypointLabelStyleCache.clear();
         baseLayer.setSource(new ol.source.XYZ({
             url: tileUrlForTheme(theme)
         }));
+        allWaypointsLayer.setStyle(allWaypointsPointStyle);
+        allWaypointsLayer.changed();
+        allWaypointsLabelLayer.changed();
     });
+
+    loadVisibleWaypoints();
+
+    const routeInput = document.getElementById('routeInput');
+    const routeInputError = document.getElementById('routeInputError');
+    let currentRouteInputIssues = [];
+
+    function validateRouteInput(rawText) {
+        const issues = [];
+        const rawLines = rawText.split('\n');
+
+        rawLines.forEach(function(rawLine, index) {
+            const trimmedLine = rawLine.trim();
+            if (!trimmedLine) {
+                return;
+            }
+
+            if (rawLine.includes(',')) {
+                issues.push({
+                    lineIndex: index,
+                    message: `Line ${index + 1}: commas are not allowed.`
+                });
+            }
+
+            if (/  +/.test(rawLine)) {
+                issues.push({
+                    lineIndex: index,
+                    message: `Line ${index + 1}: double spaces are not allowed.`
+                });
+            }
+        });
+
+        return issues;
+    }
+
+    function getRouteInputLineHeight() {
+        const computedStyle = window.getComputedStyle(routeInput);
+        const parsedLineHeight = parseFloat(computedStyle.lineHeight);
+        if (!Number.isNaN(parsedLineHeight)) {
+            return parsedLineHeight;
+        }
+
+        const parsedFontSize = parseFloat(computedStyle.fontSize);
+        return Number.isNaN(parsedFontSize) ? 24 : parsedFontSize * 1.5;
+    }
+
+    function highlightRouteInputIssues(issues) {
+        const lineHeight = getRouteInputLineHeight();
+        const computedStyle = window.getComputedStyle(routeInput);
+        const paddingTop = parseFloat(computedStyle.paddingTop) || 0;
+        const uniqueLineIndexes = [...new Set(issues.map(issue => issue.lineIndex))];
+        const gradients = uniqueLineIndexes.map(function(lineIndex) {
+            const top = paddingTop + (lineIndex * lineHeight) - routeInput.scrollTop;
+            const bottom = top + lineHeight + 1;
+            return `linear-gradient(to bottom, transparent ${top}px, rgba(220, 38, 38, 0.18) ${top}px, rgba(220, 38, 38, 0.18) ${bottom}px, transparent ${bottom}px)`;
+        });
+
+        routeInput.style.backgroundImage = gradients.join(', ');
+        routeInput.style.backgroundRepeat = 'no-repeat';
+        routeInput.classList.toggle('route-input-invalid', uniqueLineIndexes.length > 0);
+    }
+
+    function renderRouteInputErrors(issues, forceVisible) {
+        if (issues.length === 0) {
+            routeInputError.textContent = '';
+            routeInputError.style.display = 'none';
+            return;
+        }
+
+        if (!forceVisible) {
+            routeInputError.style.display = 'none';
+            return;
+        }
+
+        routeInputError.innerHTML = issues.map(issue => issue.message).join('<br>');
+        routeInputError.style.display = 'block';
+    }
+
+    function refreshRouteInputValidation(forceVisible) {
+        currentRouteInputIssues = validateRouteInput(routeInput.value);
+        highlightRouteInputIssues(currentRouteInputIssues);
+        renderRouteInputErrors(currentRouteInputIssues, forceVisible);
+    }
+
+    routeInput.addEventListener('input', function() {
+        refreshRouteInputValidation(false);
+    });
+
+    routeInput.addEventListener('scroll', function() {
+        highlightRouteInputIssues(currentRouteInputIssues);
+    });
+
+    document.getElementById('plot_route').addEventListener('click', function() {
+        const routeData = routeInput.value;
+
+        refreshRouteInputValidation(true);
+
+        if (currentRouteInputIssues.length > 0) {
+            return;
+        }
+
+        const lines = routeData.split('\n').map(l => l.trim()).filter(l => l);
+        for (const line of lines) {
+            
+        }
+    });
+
+    refreshRouteInputValidation(false);
 </script>
 
 <style>
@@ -148,6 +420,16 @@
         border-radius: 10px;
     }
 
+    #routeInput {
+        line-height: 1.5;
+        background-attachment: local;
+    }
+
+    #routeInput.route-input-invalid {
+        border-color: #dc2626;
+        box-shadow: 0 0 0 0.1rem rgba(220, 38, 38, 0.15);
+    }
+
     html[data-theme='dark'] #map-div {
         background-color: #000;
         border-color: #333;
@@ -167,6 +449,11 @@
         background-color: rgba(20, 20, 20, 0.9);
         color: #ddd;
         border-color: #444;
+    }
+
+    html[data-theme='dark'] #routeInput.route-input-invalid {
+        border-color: #f87171;
+        box-shadow: 0 0 0 0.1rem rgba(248, 113, 113, 0.18);
     }
 </style>
 {% endblock %}

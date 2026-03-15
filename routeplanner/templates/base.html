@@ -175,9 +175,18 @@
                             </svg>
                         </button>
                     </li>
-                    {% if request.is_session_valid %}
+                    {% if request.is_session_valid %} <!-- TODO add role validation later -->
                         <li class="nav-item"><a class="nav-link" href="/routeplotter">Route Plotter</a></li>
+                        <li class="nav-item dropdown">
+                            <a class="nav-link dropdown-toggle" href="#" id="navbarDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                                Settings
+                            </a>
+                            <ul class="dropdown-menu">
+                                <li><a class="dropdown-item" href="/settings/waypoints/">Waypoints</a></li>
+                            </ul>
+                        </li>
                         <li class="nav-item"><a class="nav-link fw-bold text-primary" href="/auth/logout/">Logout</a></li>
+
                     {% else %}
                         <li class="nav-item"><a class="nav-link fw-bold text-primary" href="/auth/login/">Login</a></li>
                     {% endif %}
