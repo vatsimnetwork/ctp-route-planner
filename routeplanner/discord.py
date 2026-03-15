@@ -1,6 +1,5 @@
 """
-Sends a full routes CSV snapshot to a Discord webhook after any route change.
-The HTTP request runs in a background thread so it never blocks the response.
+Just some scuffed genrated stuff to secure in case of data incosistency
 """
 
 import csv
