@@ -1,0 +1,11 @@
+.git
+.gitignore
+.idea
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.sqlite3
+staticfiles
+backups
