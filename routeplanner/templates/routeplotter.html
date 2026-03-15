@@ -13,8 +13,10 @@
             <div id="routeInputError" class="text-danger small mt-2" style="display: none;"></div>
         </div>
         <button  id="plot_route" class="btn btn-primary mt-2">Plot Route</button>
-        <button  id="clear_route" class="btn btn-secondary mt-2">Save Route</button>
+        <button  id="save_route" class="btn btn-secondary mt-2">Save Route</button>
         <button  id="load_route" class="btn btn-secondary mt-2">Load Route</button>
+        <button  id="clear_route" class="btn btn-secondary mt-2">Clear Route</button>
+
 
         
     </div>
@@ -375,6 +377,9 @@
         for (const line of lines) {
             
         }
+    });
+    document.getElementById('clear_route').addEventListener('click', function() {
+        routeInput.value = '';
     });
 
     refreshRouteInputValidation(false);
