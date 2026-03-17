@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 import os
 from pathlib import Path
+from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -136,11 +137,10 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 DISCORD_ROUTES_WEBHOOK_URL = os.environ.get('DISCORD_ROUTES_WEBHOOK_URL', '')
 
-MOUNT_PATH = os.environ.get('MOUNT_PATH', '').strip('/')
-
 AUTH_INTERNAL_URL = os.environ.get('AUTH_INTERNAL_URL', 'http://auth-panel:8000')
 AUTH_PUBLIC_URL = os.environ.get('AUTH_PUBLIC_URL', 'http://localhost:9000')
 INTERNAL_API_KEY = os.environ.get('INTERNAL_API_KEY', '')
 APP_URL = os.environ.get('APP_URL', 'http://localhost:8000')
+MOUNT_PATH = urlparse(APP_URL).path.strip('/')
 
 FIR_BOUNDARIES_PATH = BASE_DIR / 'data' / 'fir_boundaries.geojson'

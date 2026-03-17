@@ -26,7 +26,6 @@ DATABASE_PASSWORD=dbpassword
 DATABASE_HOST=localhost
 DATABASE_PORT=5432
 
-MOUNT_PATH=routes
 AUTH_INTERNAL_URL=http://auth-panel:8000
 AUTH_PUBLIC_URL=https://auth.example.com
 INTERNAL_API_KEY=your_internal_api_key
