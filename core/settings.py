@@ -137,6 +137,8 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 DISCORD_ROUTES_WEBHOOK_URL = os.environ.get('DISCORD_ROUTES_WEBHOOK_URL', '')
 
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
 AUTH_INTERNAL_URL = os.environ.get('AUTH_INTERNAL_URL', 'http://auth-panel:8000')
 AUTH_PUBLIC_URL = os.environ.get('AUTH_PUBLIC_URL', 'http://localhost:9000')
 INTERNAL_API_KEY = os.environ.get('INTERNAL_API_KEY', '')
