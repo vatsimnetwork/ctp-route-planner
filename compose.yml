@@ -1,48 +1,59 @@
 services:
- db:
-   image: postgres:17
-   environment:
-     POSTGRES_DB: ${DATABASE_NAME}
-     POSTGRES_USER: ${DATABASE_USERNAME}
-     POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
-   healthcheck:
-     test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USERNAME} -d ${DATABASE_NAME}"]
-     interval: 5s
-     timeout: 5s
-     retries: 10
-   ports:
-     - "5432:5432"
-   volumes:
-     - postgres_data:/var/lib/postgresql/data
-   env_file:
-     - .env
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: ${DATABASE_NAME}
+      POSTGRES_USER: ${DATABASE_USERNAME}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USERNAME} -d ${DATABASE_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    env_file:
+      - .env
+    networks:
+      - dev-net
  
- django-web:
-   build: .
-   container_name: django-docker
-   command: sh -c "python manage.py migrate && gunicorn core.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 60"
-   ports:
-     - "8000:8000"
-   depends_on:
-     db:
-       condition: service_healthy
-   environment:
-     DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
-     DEBUG: ${DEBUG}
-     DJANGO_LOGLEVEL: ${DJANGO_LOGLEVEL}
-     DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS}
-     DATABASE_ENGINE: ${DATABASE_ENGINE}
-     DATABASE_NAME: ${DATABASE_NAME}
-     DATABASE_USERNAME: ${DATABASE_USERNAME}
- 
-     DATABASE_PASSWORD: ${DATABASE_PASSWORD}
-     DATABASE_HOST: db
-     DATABASE_PORT: 5432
-     AUTH_SERVICE_URL: ${AUTH_SERVICE_URL}
-     INTERNAL_API_KEY: ${INTERNAL_API_KEY}
-     DISCORD_ROUTES_WEBHOOK_URL: ${DISCORD_ROUTES_WEBHOOK_URL}
-   env_file:
-     - .env
+  django-web:
+    build: .
+    container_name: django-docker
+    command: sh -c "python manage.py migrate && gunicorn core.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 60"
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
+      DEBUG: ${DEBUG}
+      DJANGO_LOGLEVEL: ${DJANGO_LOGLEVEL}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS}
+      DATABASE_ENGINE: ${DATABASE_ENGINE}
+      DATABASE_NAME: ${DATABASE_NAME}
+      DATABASE_USERNAME: ${DATABASE_USERNAME}
+  
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+      DATABASE_HOST: db
+      DATABASE_PORT: 5432
+      MOUNT_PATH: ${MOUNT_PATH}
+      AUTH_INTERNAL_URL: ${AUTH_INTERNAL_URL}
+      AUTH_PUBLIC_URL: ${AUTH_PUBLIC_URL}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      APP_URL: ${APP_URL}
+      DISCORD_ROUTES_WEBHOOK_URL: ${DISCORD_ROUTES_WEBHOOK_URL}
+    env_file:
+      - .env
+    networks:
+      - dev-net    
 
 volumes:
    postgres_data:
+
+networks:
+  dev-net:
+    external: true

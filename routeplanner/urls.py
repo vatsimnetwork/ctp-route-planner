@@ -1,5 +1,6 @@
 from django.urls import path
 from django.conf import settings
+from django.http import HttpResponseRedirect
 from django.views.generic import RedirectView
 
 from .views.home import home
@@ -12,18 +13,12 @@ urlpatterns = [
     path('', home, name='home'),
     path(
         'auth/logout/',
-        RedirectView.as_view(
-            url=f'{getattr(settings, "AUTH_SERVICE_URL", "http://auth-panel:8000")}/auth/logout/',
-            permanent=False,
-        ),
+        RedirectView.as_view(url=f'{settings.AUTH_PUBLIC_URL}/auth/logout/', permanent=False),
         name='logout',
     ),
     path(
         'auth/login/',
-        RedirectView.as_view(
-            url=f'{getattr(settings, "AUTH_SERVICE_URL", "http://auth-panel:8000")}/auth/login/',
-            permanent=False,
-        ),
+        lambda request: HttpResponseRedirect(f'{settings.AUTH_PUBLIC_URL}/auth/redirect?return_to={settings.APP_URL}'),
         name='login',
     ),
     path('routeplotter/', index, name='routeplotter'),
