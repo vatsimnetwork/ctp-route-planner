@@ -3,6 +3,7 @@ from django.shortcuts import redirect, render
 from django.core.paginator import Paginator
 from django.conf import settings
 from routeplanner.models import Location, Airway, AirwayWaypoint
+from routeplanner.permissions import write_access_required
 from django.db import transaction
 import csv
 import json
@@ -19,6 +20,7 @@ def waypoint_settings(request):
         'total_waypoints': paginator.count,
     })
 
+@write_access_required
 def import_waypoints(request):
     if request.method == 'POST' and request.FILES.get('csv_file'):
         waypoint_file = request.FILES['csv_file']
@@ -45,6 +47,7 @@ def import_waypoints(request):
             Location.objects.bulk_create(waypoints_to_create, ignore_conflicts=True)
 
     return redirect('waypoint_settings')
+@write_access_required
 def delete_all_waypoints(request):
     if request.method == 'POST':
         Location.objects.all().delete()
@@ -54,6 +57,7 @@ def firboundaries_settings(request):
     has_local = settings.FIR_BOUNDARIES_PATH.exists()
     return render(request, 'firboundariessettings.html', {'has_local': has_local})
 
+@write_access_required
 def upload_fir_boundaries(request):
     if request.method != 'POST':
         return redirect('firboundaries_settings')
@@ -80,6 +84,7 @@ def upload_fir_boundaries(request):
 
     return redirect('firboundaries_settings')
 
+@write_access_required
 def delete_fir_boundaries(request):
     if request.method == 'POST':
         path = settings.FIR_BOUNDARIES_PATH
@@ -90,6 +95,7 @@ def delete_fir_boundaries(request):
 def airway_settings(request):
     return render(request, "airwaysettings.html")
 
+@write_access_required
 def import_airway_segments(request):
     if request.method == 'POST' and request.FILES.get('csv_file'):
         csv_file = request.FILES['csv_file']
@@ -143,6 +149,7 @@ def import_airway_segments(request):
             
     return redirect('waypoint_settings')
 
+@write_access_required
 def delete_all_airways(request):
     if request.method == 'POST':
         Airway.objects.all().delete()

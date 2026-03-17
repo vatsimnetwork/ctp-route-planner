@@ -6,6 +6,7 @@ from django.shortcuts import render
 
 from routeplanner.discord import notify_routes_changed
 from routeplanner.models import Route, RouteRevisionEntry, RouteRevisionSet
+from routeplanner.permissions import write_access_required
 
 
 def _sorted_routes_queryset():
@@ -99,6 +100,7 @@ def routes(request):
     })
 
 
+@write_access_required
 @transaction.atomic
 def route_delete(request, identifier):
     if request.method != 'POST':
@@ -138,6 +140,7 @@ def route_delete(request, identifier):
     return JsonResponse({'success': True})
 
 
+@write_access_required
 @transaction.atomic
 def routes_save(request):
     if request.method != 'POST':
