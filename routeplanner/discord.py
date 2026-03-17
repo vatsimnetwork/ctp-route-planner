@@ -17,12 +17,18 @@ logger = logging.getLogger(__name__)
 
 
 def _build_csv() -> bytes:
-    routes = Route.objects.all().order_by("type", "identifier")
+    routes = Route.objects.all().order_by("group", "identifier")
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["identifier", "type", "routestring"])
+    writer.writerow(["identifier", "group", "routestring", "facilities", "tags"])
     for route in routes:
-        writer.writerow([route.identifier, route.type, route.routestring])
+        writer.writerow([
+            route.identifier,
+            route.group,
+            route.routestring,
+            route.facilities,
+            route.tags,
+        ])
     return buf.getvalue().encode("utf-8")
 
 

@@ -13,7 +13,6 @@
             <div id="routeInputError" class="text-danger small mt-2" style="display: none;"></div>
         </div>
         <button  id="plot_route" class="btn btn-primary mt-2">Plot Route</button>
-        <button  id="save_route" class="btn btn-secondary mt-2">Save Route</button>
         <button  id="load_route" class="btn btn-secondary mt-2">Load Route</button>
         <button  id="clear_route" class="btn btn-secondary mt-2">Clear Route</button>
 
@@ -39,6 +38,8 @@
 <script src="https://cdn.jsdelivr.net/npm/ol@v8.2.0/dist/ol.js"></script>
 
 <script>
+    const CSRF_TOKEN = '{{ csrf_token }}';
+
     function tileUrlForTheme(theme) {
         return theme === 'dark'
             ? 'https://{a-c}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png'
@@ -219,10 +220,21 @@
 
     map.on('moveend', loadVisibleWaypoints);
 
+    const routeLineSource = new ol.source.Vector();
+    const routeLineLayer = new ol.layer.Vector({
+        source: routeLineSource,
+        zIndex: 10,
+        style: [
+            new ol.style.Style({ stroke: new ol.style.Stroke({ color: 'rgba(0,0,0,0.45)', width: 4 }) }),
+            new ol.style.Style({ stroke: new ol.style.Stroke({ color: '#38bdf8', width: 2 }) }),
+        ]
+    });
+    map.addLayer(routeLineLayer);
+
     const waypointSource = new ol.source.Vector();
     const waypointLayer = new ol.layer.Vector({ 
         source: waypointSource,
-        zIndex: 10
+        zIndex: 11
     });
     map.addLayer(waypointLayer);
 
@@ -373,13 +385,35 @@
             return;
         }
 
-        const lines = routeData.split('\n').map(l => l.trim()).filter(l => l);
-        for (const line of lines) {
-            
-        }
+        waypointSource.clear();
+        routeLineSource.clear();
+
+        fetch('/routeplotter/plotroute/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
+            body: JSON.stringify({ route: routeData })
+        })
+        .then(r => r.json())
+        .then(data => {
+            data.routes.forEach(route => {
+                if (route.coords.length > 1) {
+                    const lineFeature = new ol.Feature({
+                        geometry: new ol.geom.LineString(
+                            route.coords.map(c => ol.proj.fromLonLat(c))
+                        )
+                    });
+                    routeLineSource.addFeature(lineFeature);
+                }
+                route.labels.forEach(wp => addWaypoint(wp.lon, wp.lat, wp.identifier));
+            });
+        })
+        .catch(err => console.error('plot_route error:', err));
     });
     document.getElementById('clear_route').addEventListener('click', function() {
         routeInput.value = '';
+        waypointSource.clear();
+        routeLineSource.clear();
+        refreshRouteInputValidation(false);
     });
 
     refreshRouteInputValidation(false);

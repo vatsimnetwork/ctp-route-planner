@@ -135,3 +135,5 @@ STATICFILES_DIRS = [
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 DISCORD_ROUTES_WEBHOOK_URL = os.environ.get('DISCORD_ROUTES_WEBHOOK_URL', '')
+
+FIR_BOUNDARIES_PATH = BASE_DIR / 'data' / 'fir_boundaries.geojson'

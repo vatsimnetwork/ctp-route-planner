@@ -6,6 +6,30 @@
         color: var(--muted-text);
     }
 
+    .routes-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 1rem;
+    }
+
+    .revision-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.5rem 0.75rem;
+        border: 1px solid var(--surface-border);
+        border-radius: 999px;
+        background: var(--surface-bg);
+        color: var(--text-color);
+        font-size: 0.875rem;
+        white-space: nowrap;
+    }
+
+    .revision-badge strong {
+        font-variant-numeric: tabular-nums;
+    }
+
     .route-identifier-input {
         min-width: 240px;
     }
@@ -17,8 +41,11 @@
 </style>
 
 <div class="container-fluid mt-4">
-    <h1>Routes</h1>
-    <p class="routes-help-text mb-3">Route ID is generated automatically from the first and last waypoint in the route string. For NAT routes, the identifier can be set manually.</p>
+    <div class="routes-header mb-2">
+        <h1 class="mb-0">Routes</h1>
+        <div class="revision-badge">Revision set <strong id="current-revision-number">{{ current_revision_number }}</strong></div>
+    </div>
+    <p class="routes-help-text mb-3">Identifiers are editable for every route and must remain unique. Group, facilities, and tags are free-text fields. Route, facilities, and tags use the same space-separated syntax.</p>
 
     <div id="alert-container"></div>
 
@@ -27,16 +54,10 @@
             type="text"
             id="filter-search"
             class="form-control form-control-sm"
-            placeholder="Search identifier or route string…"
+            placeholder="Search identifier, group, route, facilities, or tags…"
             style="max-width:340px"
             oninput="applyFilters()"
         >
-        <select id="filter-type" class="form-select form-select-sm" style="max-width:160px" onchange="applyFilters()">
-            <option value="">All types</option>
-            {% for key, label in route_type_choices %}
-            <option value="{{ key }}">{{ label }}</option>
-            {% endfor %}
-        </select>
         <button type="button" class="btn btn-outline-secondary btn-sm" onclick="clearFilters()">Clear</button>
     </div>
 
@@ -44,8 +65,10 @@
         <thead>
             <tr>
                 <th style="width:260px">Identifier</th>
-                <th style="width:150px">Type</th>
+                <th style="width:180px">Group</th>
                 <th>Route String</th>
+                <th>Facilities</th>
+                <th>Tags</th>
                 <th style="width:90px">Actions</th>
             </tr>
         </thead>
@@ -54,19 +77,17 @@
             <tr
                 data-pk="{{ route.identifier }}"
                 data-original-pk="{{ route.identifier }}"
+                data-original-group="{{ route.group|escapejs }}"
                 data-original-routestring="{{ route.routestring|escapejs }}"
-                data-original-type="{{ route.type }}"
+                data-original-facilities="{{ route.facilities|escapejs }}"
+                data-original-tags="{{ route.tags|escapejs }}"
                 data-is-new="false"
             >
-                <td><input type="text" class="form-control form-control-sm route-identifier-input{% if route.type != 'NAT' %} bg-body-secondary{% endif %}" name="identifier" value="{{ route.identifier }}" {% if route.type != 'NAT' %}readonly{% endif %}{% if route.type == 'NAT' %} placeholder="e.g. NATA"{% endif %}></td>
-                 <td>
-                    <select class="form-select form-select-sm" name="type">
-                        {% for key, label in route_type_choices %}
-                        <option value="{{ key }}" {% if route.type == key %}selected{% endif %}>{{ label }}</option>
-                        {% endfor %}
-                    </select>
-                </td>
+                <td><input type="text" class="form-control form-control-sm route-identifier-input" name="identifier" value="{{ route.identifier }}"></td>
+                <td><input type="text" class="form-control form-control-sm" name="group" value="{{ route.group }}"></td>
                 <td><input type="text" class="form-control form-control-sm" name="routestring" value="{{ route.routestring }}"></td>
+                <td><input type="text" class="form-control form-control-sm" name="facilities" value="{{ route.facilities }}"></td>
+                <td><input type="text" class="form-control form-control-sm" name="tags" value="{{ route.tags }}"></td>
                 <td>
                     <button type="button" class="btn btn-danger btn-sm" onclick="deleteRow(this)">Delete</button>
                 </td>
@@ -82,16 +103,12 @@
 </div>
 
 <script>
-const ROUTE_TYPE_CHOICES = {{ route_type_choices_json|safe }};
 const CSRF_TOKEN = '{{ csrf_token }}';
 const SAVE_URL = '{% url "routes_save" %}';
 const DELETE_URL_TEMPLATE = '{% url "route_delete" "__route_id__" %}';
 
-function buildTypeSelect(selectedValue) {
-    const options = ROUTE_TYPE_CHOICES.map(([key, label]) =>
-        `<option value="${key}" ${key === selectedValue ? 'selected' : ''}>${label}</option>`
-    ).join('');
-    return `<select class="form-select form-select-sm" name="type">${options}</select>`;
+function normalizeTokenField(value) {
+    return value.replace(/[,;]/g, ' ').split(/\s+/).map(part => part.trim()).filter(Boolean).join(' ');
 }
 
 function addRow() {
@@ -99,50 +116,31 @@ function addRow() {
     const tr = document.createElement('tr');
     tr.dataset.pk = '';
     tr.dataset.originalPk = '';
+    tr.dataset.originalGroup = '';
     tr.dataset.originalRoutestring = '';
-    tr.dataset.originalType = '';
+    tr.dataset.originalFacilities = '';
+    tr.dataset.originalTags = '';
     tr.dataset.isNew = 'true';
     tr.innerHTML = `
-        <td><input type="text" class="form-control form-control-sm bg-body-secondary route-identifier-input" name="identifier" value="" readonly></td>
-        <td>${buildTypeSelect(ROUTE_TYPE_CHOICES[0][0])}</td>
+        <td><input type="text" class="form-control form-control-sm route-identifier-input" name="identifier" value=""></td>
+        <td><input type="text" class="form-control form-control-sm" name="group" value=""></td>
         <td><input type="text" class="form-control form-control-sm" name="routestring" value=""></td>
+        <td><input type="text" class="form-control form-control-sm" name="facilities" value=""></td>
+        <td><input type="text" class="form-control form-control-sm" name="tags" value=""></td>
         <td><button type="button" class="btn btn-danger btn-sm" onclick="deleteRow(this)">Delete</button></td>
     `;
     tbody.appendChild(tr);
-    updateIdentifierEditability(tr);
-    refreshIdentifierPreviews();
-    tr.querySelector('input[name="routestring"]').focus();
+    tr.querySelector('input[name="identifier"]').focus();
 }
 
 function buildDeleteUrl(identifier) {
     return DELETE_URL_TEMPLATE.replace('__route_id__', encodeURIComponent(identifier));
 }
 
-function updateIdentifierEditability(row) {
-    const type = row.querySelector('select[name="type"]').value;
-    const identifierInput = row.querySelector('input[name="identifier"]');
-    if (type === 'NAT') {
-        identifierInput.readOnly = false;
-        identifierInput.classList.remove('bg-body-secondary');
-        identifierInput.placeholder = 'e.g. NATA';
-        identifierInput.value = '';
-    } else {
-        identifierInput.readOnly = true;
-        identifierInput.classList.add('bg-body-secondary');
-        identifierInput.placeholder = '';
-        identifierInput.value = '';
-    }
-}
-
-function normalizeRouteString(value) {
-    return value.replace(/[,;]/g, ' ').split(/\s+/).map(part => part.trim()).filter(Boolean).join(' ');
-}
-
 async function deleteRow(btn) {
     const row = btn.closest('tr');
     if (!row.dataset.originalPk) {
         row.remove();
-        refreshIdentifierPreviews();
         return;
     }
 
@@ -158,8 +156,10 @@ async function deleteRow(btn) {
             body: JSON.stringify({
                 original: {
                     pk: row.dataset.originalPk,
+                    group: row.dataset.originalGroup,
                     routestring: row.dataset.originalRoutestring,
-                    type: row.dataset.originalType,
+                    facilities: row.dataset.originalFacilities,
+                    tags: row.dataset.originalTags,
                 },
             }),
         });
@@ -170,7 +170,6 @@ async function deleteRow(btn) {
         }
 
         row.remove();
-        refreshIdentifierPreviews();
         showAlert('Route deleted successfully.', 'success');
     } catch (error) {
         btn.disabled = false;
@@ -178,80 +177,20 @@ async function deleteRow(btn) {
     }
 }
 
-function buildIdentifierBase(routestring) {
-    const parts = normalizeRouteString(routestring).split(' ').map(part => part.trim().toUpperCase()).filter(Boolean);
-    if (!parts.length) {
-        return '';
-    }
-    return `${parts[0]}_${parts[parts.length - 1]}`;
-}
-
-function buildUniquePreviewIdentifier(routestring, reservedIdentifiers, currentIdentifier) {
-    const base = buildIdentifierBase(routestring);
-    if (!base) {
-        return '';
-    }
-
-    const taken = new Set(reservedIdentifiers);
-    if (currentIdentifier) {
-        taken.delete(currentIdentifier);
-    }
-
-    let suffix = 1;
-    let candidate = `${base}_${suffix}`;
-    while (taken.has(candidate)) {
-        suffix += 1;
-        candidate = `${base}_${suffix}`;
-    }
-    return candidate;
-}
-
-function refreshIdentifierPreviews() {
-    const rows = Array.from(document.querySelectorAll('#routes-tbody tr'));
-    const reservedIdentifiers = new Set();
-
-    rows.forEach(row => {
-        const isNew = row.dataset.isNew === 'true';
-        const type = row.querySelector('select[name="type"]').value;
-        const routestring = normalizeRouteString(row.querySelector('input[name="routestring"]').value);
-        const identifierInput = row.querySelector('input[name="identifier"]');
-
-        if (type === 'NAT') {
-            const val = identifierInput.value.trim();
-            if (val) reservedIdentifiers.add(val);
-            return;
-        }
-
-        const isChanged = isRowChanged(row);
-
-        if (!isNew && !isChanged) {
-            identifierInput.value = row.dataset.originalPk;
-            reservedIdentifiers.add(row.dataset.originalPk);
-            return;
-        }
-
-        const nextIdentifier = buildUniquePreviewIdentifier(routestring, reservedIdentifiers, row.dataset.originalPk);
-        if (!nextIdentifier) {
-            identifierInput.value = '';
-            return;
-        }
-
-        identifierInput.value = nextIdentifier;
-        reservedIdentifiers.add(nextIdentifier);
-    });
-}
-
 function isRowChanged(row) {
-    const routestring = normalizeRouteString(row.querySelector('input[name="routestring"]').value);
-    const type = row.querySelector('select[name="type"]').value;
-    const identifier = row.querySelector('input[name="identifier"]').value.trim();
+    const identifier = row.querySelector('input[name="identifier"]').value.trim().toUpperCase();
+    const group = row.querySelector('input[name="group"]').value.trim();
+    const routestring = normalizeTokenField(row.querySelector('input[name="routestring"]').value);
+    const facilities = normalizeTokenField(row.querySelector('input[name="facilities"]').value);
+    const tags = normalizeTokenField(row.querySelector('input[name="tags"]').value);
     if (row.dataset.isNew === 'true') {
-        return Boolean(routestring) || (type === 'NAT' && Boolean(identifier));
+        return Boolean(identifier) || Boolean(group) || Boolean(routestring) || Boolean(facilities) || Boolean(tags);
     }
-    const identifierChanged = type === 'NAT' && identifier !== row.dataset.originalPk;
-    return routestring !== normalizeRouteString(row.dataset.originalRoutestring)
-        || type !== row.dataset.originalType
-        || identifierChanged;
+    return identifier !== row.dataset.originalPk
+        || group !== row.dataset.originalGroup
+        || routestring !== normalizeTokenField(row.dataset.originalRoutestring)
+        || facilities !== normalizeTokenField(row.dataset.originalFacilities)
+        || tags !== normalizeTokenField(row.dataset.originalTags);
 }
 
 function showAlert(message, type) {
@@ -267,23 +206,33 @@ function saveAll() {
     const updates = [];
     rows.forEach(row => {
         const pk = row.dataset.pk;
+        const identifierInput = row.querySelector('input[name="identifier"]');
+        identifierInput.value = identifierInput.value.trim().toUpperCase();
+        const identifier = identifierInput.value;
+        const group = row.querySelector('input[name="group"]').value.trim();
         const routeInput = row.querySelector('input[name="routestring"]');
-        const routestring = normalizeRouteString(routeInput.value);
+        const routestring = normalizeTokenField(routeInput.value);
         routeInput.value = routestring;
-        const type = row.querySelector('select[name="type"]').value;
-        const customIdentifier = type === 'NAT'
-            ? row.querySelector('input[name="identifier"]').value.trim().toUpperCase()
-            : '';
+        const facilitiesInput = row.querySelector('input[name="facilities"]');
+        const facilities = normalizeTokenField(facilitiesInput.value);
+        facilitiesInput.value = facilities;
+        const tagsInput = row.querySelector('input[name="tags"]');
+        const tags = normalizeTokenField(tagsInput.value);
+        tagsInput.value = tags;
         if (isRowChanged(row)) {
             updates.push({
                 pk,
-                ...(type === 'NAT' ? { identifier: customIdentifier } : {}),
+                identifier,
+                group,
                 routestring,
-                type,
+                facilities,
+                tags,
                 original: {
                     pk: row.dataset.originalPk,
+                    group: row.dataset.originalGroup,
                     routestring: row.dataset.originalRoutestring,
-                    type: row.dataset.originalType,
+                    facilities: row.dataset.originalFacilities,
+                    tags: row.dataset.originalTags,
                 },
             });
         }
@@ -305,7 +254,10 @@ function saveAll() {
     .then(res => res.json())
     .then(result => {
         if (result.success) {
-            showAlert('Routes saved successfully.', 'success');
+            if (typeof result.revision_number !== 'undefined') {
+                document.getElementById('current-revision-number').textContent = result.revision_number;
+            }
+            showAlert(`Routes saved successfully. Revision set ${result.revision_number}.`, 'success');
             window.location.reload();
         } else {
             showAlert('Error: ' + (result.error || 'Unknown error'), 'danger');
@@ -315,53 +267,50 @@ function saveAll() {
 }
 
 document.getElementById('routes-tbody').addEventListener('input', event => {
-    if (event.target.name === 'routestring') {
+    if (['routestring', 'facilities', 'tags'].includes(event.target.name)) {
         if (/[,;]/.test(event.target.value)) {
-            showAlert('Commas and semicolons are not allowed in route strings.', 'warning');
+            showAlert('Commas and semicolons are not allowed in route, facilities, or tags fields.', 'warning');
         }
-        refreshIdentifierPreviews();
     }
     if (event.target.name === 'identifier') {
-        // Auto-uppercase and strip spaces for NAT identifiers
+        // Auto-uppercase for identifiers.
         const cur = event.target.selectionStart;
-        event.target.value = event.target.value.replace(/\s/g, '').toUpperCase();
+        event.target.value = event.target.value.toUpperCase();
         event.target.setSelectionRange(cur, cur);
-        applyFilters();
     }
+    applyFilters();
 });
 
 document.getElementById('routes-tbody').addEventListener('change', event => {
-    if (event.target.name === 'type') {
-        updateIdentifierEditability(event.target.closest('tr'));
-        refreshIdentifierPreviews();
+    if (['routestring', 'facilities', 'tags'].includes(event.target.name)) {
+        event.target.value = normalizeTokenField(event.target.value);
     }
-    if (event.target.name === 'routestring') {
-        event.target.value = normalizeRouteString(event.target.value);
-        refreshIdentifierPreviews();
-    }
+    applyFilters();
 });
-
-refreshIdentifierPreviews();
 
 function applyFilters() {
     const searchTerm = document.getElementById('filter-search').value.trim().toLowerCase();
-    const typeFilter = document.getElementById('filter-type').value;
 
     document.querySelectorAll('#routes-tbody tr').forEach(row => {
         const identifier = (row.querySelector('input[name="identifier"]').value || '').toLowerCase();
+        const group = (row.querySelector('input[name="group"]').value || '').toLowerCase();
         const routestring = (row.querySelector('input[name="routestring"]').value || '').toLowerCase();
-        const type = row.querySelector('select[name="type"]').value;
+        const facilities = (row.querySelector('input[name="facilities"]').value || '').toLowerCase();
+        const tags = (row.querySelector('input[name="tags"]').value || '').toLowerCase();
 
-        const matchesSearch = !searchTerm || identifier.includes(searchTerm) || routestring.includes(searchTerm);
-        const matchesType = !typeFilter || type === typeFilter;
+        const matchesSearch = !searchTerm
+            || identifier.includes(searchTerm)
+            || group.includes(searchTerm)
+            || routestring.includes(searchTerm)
+            || facilities.includes(searchTerm)
+            || tags.includes(searchTerm);
 
-        row.style.display = (matchesSearch && matchesType) ? '' : 'none';
+        row.style.display = matchesSearch ? '' : 'none';
     });
 }
 
 function clearFilters() {
     document.getElementById('filter-search').value = '';
-    document.getElementById('filter-type').value = '';
     applyFilters();
 }
 </script>

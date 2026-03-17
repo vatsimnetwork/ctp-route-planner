@@ -18,13 +18,19 @@ class Command(BaseCommand):
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         filename = backup_dir / f"routes_{timestamp}.csv"
 
-        routes = Route.objects.all().order_by("type", "identifier")
+        routes = Route.objects.all().order_by("group", "identifier")
 
         with open(filename, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(["identifier", "type", "routestring"])
+            writer.writerow(["identifier", "group", "routestring", "facilities", "tags"])
             for route in routes:
-                writer.writerow([route.identifier, route.type, route.routestring])
+                writer.writerow([
+                    route.identifier,
+                    route.group,
+                    route.routestring,
+                    route.facilities,
+                    route.tags,
+                ])
 
         self.stdout.write(
             self.style.SUCCESS(f"Backup saved: {filename} ({routes.count()} routes)")

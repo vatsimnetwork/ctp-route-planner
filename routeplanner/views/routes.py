@@ -1,65 +1,87 @@
 import json
 
 from django.db import transaction
-from django.db.models import Case, IntegerField, Value, When
 from django.http import JsonResponse
 from django.shortcuts import render
 
 from routeplanner.discord import notify_routes_changed
-from routeplanner.models import (
-    ROUTE_TYPE_CHOICES,
-    Route,
-    build_unique_route_identifier,
-    normalize_route_type,
-)
-
-
-TYPE_SORT_ORDER = {
-    'AMAS': 0,
-    'EMEA': 1,
-    'NAT': 2,
-}
+from routeplanner.models import Route, RouteRevisionEntry, RouteRevisionSet
 
 
 def _sorted_routes_queryset():
-    type_order = Case(
-        *[When(type=route_type, then=Value(order)) for route_type, order in TYPE_SORT_ORDER.items()],
-        default=Value(999),
-        output_field=IntegerField(),
-    )
-    return Route.objects.annotate(type_order=type_order).order_by('type_order', 'identifier')
+    return Route.objects.order_by('group', 'identifier')
+
+
+def _latest_revision_number():
+    latest_revision = RouteRevisionSet.objects.order_by('-number').first()
+    return latest_revision.number if latest_revision else 0
+
+
+def _create_revision_snapshot(routes_queryset):
+    latest_revision = RouteRevisionSet.objects.select_for_update().order_by('-number').first()
+    next_revision_number = (latest_revision.number if latest_revision else 0) + 1
+    revision = RouteRevisionSet.objects.create(number=next_revision_number)
+    RouteRevisionEntry.objects.bulk_create([
+        RouteRevisionEntry(
+            revision=revision,
+            identifier=route.identifier,
+            group=route.group,
+            routestring=route.routestring,
+            facilities=route.facilities,
+            tags=route.tags,
+        )
+        for route in routes_queryset
+    ])
+    return revision.number
+
+
+def _normalize_token_text(value):
+    return ' '.join((value or '').replace(',', ' ').replace(';', ' ').split())
 
 
 def _serialize_route(route):
     return {
         'pk': route.identifier,
         'identifier': route.identifier,
+        'group': route.group,
         'routestring': route.routestring,
-        'type': normalize_route_type(route.type),
+        'facilities': route.facilities,
+        'tags': route.tags,
     }
 
 
 def _validate_route_payload(route_data, require_original=False, require_current_values=True):
-    routestring = (route_data.get('routestring') or '').strip()
-    route_type = normalize_route_type(route_data.get('type'))
+    identifier = (route_data.get('identifier') or '').strip().upper()
+    group = (route_data.get('group') or '').strip()
+    routestring = _normalize_token_text(route_data.get('routestring'))
+    facilities = _normalize_token_text(route_data.get('facilities'))
+    tags = _normalize_token_text(route_data.get('tags'))
     original = route_data.get('original') or {}
 
+    if require_current_values and not identifier:
+        return None, 'Identifier is required.'
     if require_current_values and not routestring:
         return None, 'Route string is required.'
     if require_current_values and (',' in routestring or ';' in routestring):
         return None, 'Commas and semicolons are not allowed in route strings.'
-    if require_current_values and route_type not in {choice[0] for choice in ROUTE_TYPE_CHOICES}:
-        return None, f"Invalid route type: {route_data.get('type')}"
+    if require_current_values and (',' in facilities or ';' in facilities):
+        return None, 'Commas and semicolons are not allowed in facilities.'
+    if require_current_values and (',' in tags or ';' in tags):
+        return None, 'Commas and semicolons are not allowed in tags.'
 
     validated = {
         'pk': (route_data.get('pk') or '').strip(),
-        'identifier': (route_data.get('identifier') or '').strip().upper(),
+        'identifier': identifier,
+        'group': group,
         'routestring': routestring,
-        'type': route_type,
+        'facilities': facilities,
+        'tags': tags,
         'original': {
             'pk': (original.get('pk') or '').strip(),
-            'routestring': (original.get('routestring') or '').strip(),
-            'type': normalize_route_type(original.get('type')),
+            'group': (original.get('group') or '').strip(),
+            'routestring': _normalize_token_text(original.get('routestring')),
+            'facilities': _normalize_token_text(original.get('facilities')),
+            'tags': _normalize_token_text(original.get('tags')),
         },
     }
 
@@ -71,11 +93,9 @@ def _validate_route_payload(route_data, require_original=False, require_current_
 
 def routes(request):
     route_list = _sorted_routes_queryset()
-    choices = list(ROUTE_TYPE_CHOICES)
     return render(request, 'routes.html', {
         'routes': route_list,
-        'route_type_choices': choices,
-        'route_type_choices_json': json.dumps(choices),
+        'current_revision_number': _latest_revision_number(),
     })
 
 
@@ -92,7 +112,9 @@ def route_delete(request, identifier):
     original = payload.get('original') or {}
     original_pk = (original.get('pk') or '').strip()
     original_routestring = (original.get('routestring') or '').strip()
-    original_type = normalize_route_type(original.get('type'))
+    original_group = (original.get('group') or '').strip()
+    original_facilities = _normalize_token_text(original.get('facilities'))
+    original_tags = _normalize_token_text(original.get('tags'))
 
     if not original_pk or original_pk != identifier:
         return JsonResponse({'error': 'Original route reference is missing.'}, status=400)
@@ -102,6 +124,14 @@ def route_delete(request, identifier):
     except Route.DoesNotExist:
         # Already gone — treat as success
         return JsonResponse({'success': True})
+
+    if (
+        route.routestring != _normalize_token_text(original_routestring)
+        or route.group != original_group
+        or route.facilities != original_facilities
+        or route.tags != original_tags
+    ):
+        return JsonResponse({'error': f"Conflict: route '{original_pk}' was changed by another user."}, status=409)
 
     route.delete()
     notify_routes_changed(f"deleted '{identifier}'")
@@ -147,7 +177,12 @@ def routes_save(request):
         route = routes_by_identifier.get(original['pk'])
         if route is None:
             return JsonResponse({'error': f"Conflict: route '{original['pk']}' no longer exists."}, status=409)
-        if route.routestring != original['routestring'] or normalize_route_type(route.type) != original['type']:
+        if (
+            route.routestring != original['routestring']
+            or route.group != original['group']
+            or route.facilities != original['facilities']
+            or route.tags != original['tags']
+        ):
             return JsonResponse({'error': f"Conflict: route '{original['pk']}' was changed by another user."}, status=409)
 
         route.delete()
@@ -163,53 +198,53 @@ def routes_save(request):
             route = routes_by_identifier.get(current_identifier)
             if route is None:
                 return JsonResponse({'error': f"Conflict: route '{current_identifier}' no longer exists."}, status=409)
-            if route.routestring != original['routestring'] or normalize_route_type(route.type) != original['type']:
+            if (
+                route.routestring != original['routestring']
+                or route.group != original['group']
+                or route.facilities != original['facilities']
+                or route.tags != original['tags']
+            ):
                 return JsonResponse({'error': f"Conflict: route '{current_identifier}' was changed by another user."}, status=409)
         else:
             route = None
 
-        if route_data['type'] == 'NAT':
-            new_identifier = route_data['identifier']
-            if not new_identifier:
-                return JsonResponse({'error': 'NAT routes require a custom identifier.'}, status=400)
-            if ' ' in new_identifier or ',' in new_identifier or ';' in new_identifier:
-                return JsonResponse({'error': 'NAT identifier cannot contain spaces, commas, or semicolons.'}, status=400)
-            taken = reserved_identifiers - ({current_identifier} if current_identifier else set())
-            if new_identifier in taken:
-                return JsonResponse({'error': f"Identifier '{new_identifier}' is already in use."}, status=400)
-        else:
-            new_identifier = build_unique_route_identifier(
-                route_data['routestring'],
-                reserved_identifiers,
-                current_identifier=current_identifier,
-            )
-            if not new_identifier:
-                return JsonResponse({'error': 'Route string must contain at least one waypoint.'}, status=400)
+        new_identifier = route_data['identifier']
+        taken = reserved_identifiers - ({current_identifier} if current_identifier else set())
+        if new_identifier in taken:
+            return JsonResponse({'error': f"Identifier '{new_identifier}' is already in use."}, status=400)
 
         if route is None:
             route = Route.objects.create(
                 identifier=new_identifier,
+                group=route_data['group'],
                 routestring=route_data['routestring'],
-                type=route_data['type'],
+                facilities=route_data['facilities'],
+                tags=route_data['tags'],
             )
         elif new_identifier == route.identifier:
+            route.group = route_data['group']
             route.routestring = route_data['routestring']
-            route.type = route_data['type']
-            route.save(update_fields=['routestring', 'type'])
+            route.facilities = route_data['facilities']
+            route.tags = route_data['tags']
+            route.save(update_fields=['group', 'routestring', 'facilities', 'tags'])
         else:
             route.delete()
             reserved_identifiers.discard(current_identifier)
             routes_by_identifier.pop(current_identifier, None)
             route = Route.objects.create(
                 identifier=new_identifier,
+                group=route_data['group'],
                 routestring=route_data['routestring'],
-                type=route_data['type'],
+                facilities=route_data['facilities'],
+                tags=route_data['tags'],
             )
 
         reserved_identifiers.add(route.identifier)
         routes_by_identifier[route.identifier] = route
         saved_routes.append(_serialize_route(route))
 
+    revision_number = _create_revision_snapshot(_sorted_routes_queryset())
+
     if saved_routes:
         notify_routes_changed(f"saved {len(saved_routes)} route(s)")
-    return JsonResponse({'success': True, 'saved_routes': saved_routes})
+    return JsonResponse({'success': True, 'saved_routes': saved_routes, 'revision_number': revision_number})

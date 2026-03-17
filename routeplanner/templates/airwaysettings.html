@@ -1,0 +1,23 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="m-5">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h2>Airways</h2>
+        <form action="/settings/airways/import/" method="post" enctype="multipart/form-data" class="d-flex gap-2">
+            {% csrf_token %}
+            <input type="file" name="csv_file" class="form-control form-control-sm" accept=".csv" required>
+            <button type="submit" class="btn btn-primary btn-sm">Import CSV</button>
+        </form>
+    </div>
+    
+
+    <form action="/settings/airways/deleteall/" method="post"  class="d-flex gap-2">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-primary btn-sm">Delete All</button>
+    </form>
+
+
+
+</div>
+{% endblock %}
