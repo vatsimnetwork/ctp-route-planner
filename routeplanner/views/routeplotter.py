@@ -3,7 +3,9 @@ import requests
 from django.shortcuts import render
 from django.http import JsonResponse
 from django.conf import settings
-from routeplanner.models import Location, Airway, AirwayWaypoint
+from routeplanner.models import Location, Airway, AirwayWaypoint, Route
+
+DIRECT_ROUTE_TOKENS = {'DCT', 'DIRECT'}
 
 def index(request):
     return render(request, 'routeplotter.html')
@@ -52,10 +54,14 @@ def check_for_oceanic_waypoint(waypoint: str):
         return lat,lon
     except:
         return False
+
+
+def normalize_route_text(value: str) -> str:
+    return ' '.join((value or '').replace(',', ' ').replace(';', ' ').split())
     
 def get_waypoint(waypoint_string: str, before_waypoint: Location):
     try:
-        waypoints = Location.objects.filter(identifier=waypoint_string)
+        waypoints = Location.objects.filter(identifier__iexact=waypoint_string)
         if len(waypoints) == 0:
             return None
         if len(waypoints) == 1:
@@ -70,7 +76,7 @@ def get_waypoint(waypoint_string: str, before_waypoint: Location):
     
 def get_airway_coordinates(airway_identifier: str, entry_waypoint: Location, exit_waypoint: Location):
     try:
-        airway = Airway.objects.get(identifier=airway_identifier)
+        airway = Airway.objects.get(identifier__iexact=airway_identifier)
         waypoints = airway.get_ordered_waypoints()
         entry_index = next(i for i, wp in enumerate(waypoints) if wp.identifier == entry_waypoint.identifier)
         exit_index = next(i for i, wp in enumerate(waypoints) if wp.identifier == exit_waypoint.identifier)
@@ -78,8 +84,106 @@ def get_airway_coordinates(airway_identifier: str, entry_waypoint: Location, exi
             return [[wp.longitude, wp.latitude] for wp in waypoints[entry_index:exit_index + 1]]
         else:
             return [[wp.longitude, wp.latitude] for wp in reversed(waypoints[exit_index:entry_index + 1])]
-    except Airway.DoesNotExist:
+    except (Airway.DoesNotExist, StopIteration):
         return None
+
+
+def calculate_distance_squared(wp: Location, ref_wp: Location) -> float:
+    """Calculate squared distance between two waypoints (avoids sqrt)"""
+    return (wp.latitude - ref_wp.latitude) ** 2 + (wp.longitude - ref_wp.longitude) ** 2
+
+
+def resolve_token(token_upper: str, prev_location: Location = None):
+    """
+    Resolve a token to either a waypoint or airway.
+    If both exist with the same name, return the one that's closer.
+    
+    Returns: dict with 'type', and either 'waypoint' or 'airway' data
+    """
+    # First try to get waypoint(s)
+    waypoints = Location.objects.filter(identifier__iexact=token_upper)
+    airway = Airway.objects.filter(identifier__iexact=token_upper).first()
+    
+    # No waypoint or airway found
+    if not waypoints.exists() and not airway:
+        return None
+    
+    # Only waypoint exists
+    if waypoints.exists() and not airway:
+        if len(waypoints) == 1:
+            wp = waypoints[0]
+        else:
+            # Multiple waypoints with same name - choose closest
+            wp = min(
+                waypoints,
+                key=lambda w: calculate_distance_squared(w, prev_location) if prev_location else 0
+            )
+        return {
+            'type': 'waypoint',
+            'waypoint': wp,
+            'identifier': wp.identifier,
+            'lon': wp.longitude,
+            'lat': wp.latitude
+        }
+    
+    # Only airway exists
+    if not waypoints.exists() and airway:
+        return {
+            'type': 'airway',
+            'airway': airway,
+            'identifier': airway.identifier
+        }
+    
+    # Both exist - choose the closer one
+    # For waypoint, use its coordinates
+    # For airway, use the first waypoint's coordinates
+    if prev_location:
+        # Get closest waypoint from the waypoints list
+        closest_waypoint = min(
+            waypoints,
+            key=lambda w: calculate_distance_squared(w, prev_location)
+        )
+        waypoint_distance = calculate_distance_squared(closest_waypoint, prev_location)
+        
+        # Get first waypoint of airway as entry point
+        airway_first_wp = airway.get_ordered_waypoints().first()
+        if airway_first_wp:
+            airway_distance = calculate_distance_squared(airway_first_wp, prev_location)
+        else:
+            airway_distance = float('inf')
+        
+        # Choose the closer one
+        if waypoint_distance <= airway_distance:
+            return {
+                'type': 'waypoint',
+                'waypoint': closest_waypoint,
+                'identifier': closest_waypoint.identifier,
+                'lon': closest_waypoint.longitude,
+                'lat': closest_waypoint.latitude
+            }
+        else:
+            return {
+                'type': 'airway',
+                'airway': airway,
+                'identifier': airway.identifier
+            }
+    else:
+        # No previous location to compare - prefer waypoint
+        if waypoints.exists():
+            wp = waypoints.first()
+            return {
+                'type': 'waypoint',
+                'waypoint': wp,
+                'identifier': wp.identifier,
+                'lon': wp.longitude,
+                'lat': wp.latitude
+            }
+        else:
+            return {
+                'type': 'airway',
+                'airway': airway,
+                'identifier': airway.identifier
+            }
 
 
 def plot_route(request):
@@ -95,32 +199,55 @@ def plot_route(request):
 
     result = []
     for line in lines:
-        tokens = line.split()
+        normalized_line = normalize_route_text(line)
+        route_obj = Route.objects.filter(identifier__iexact=normalized_line).first()
+        if route_obj is None:
+            route_obj = Route.objects.filter(routestring__iexact=normalized_line).first()
+        route_group = route_obj.group if route_obj else ''
+        route_tokens = normalized_line.split()
+        
         resolved = []
         prev_location = None
 
-        for token in tokens:
-            oceanic = check_for_oceanic_waypoint(token)
+        for token in route_tokens:
+            token_clean = token.strip()
+            token_upper = token_clean.upper()
+
+            # ICAO routes may include DCT as a separator for a direct leg.
+            if token_upper in DIRECT_ROUTE_TOKENS:
+                continue
+
+            oceanic = check_for_oceanic_waypoint(token_upper)
             if oceanic:
                 lat, lon = oceanic
-                resolved.append({'type': 'waypoint', 'identifier': token, 'lon': lon, 'lat': lat, 'location': None})
+                resolved.append({'type': 'waypoint', 'identifier': token_upper, 'lon': lon, 'lat': lat, 'location': None})
                 prev_location = None
                 continue
 
-            wp = get_waypoint(token, prev_location) if prev_location else Location.objects.filter(identifier=token).first()
-            if wp:
-                resolved.append({'type': 'waypoint', 'identifier': wp.identifier, 'lon': wp.longitude, 'lat': wp.latitude, 'location': wp})
-                prev_location = wp
+            # Use the new resolve_token function that handles both waypoints and airways
+            resolved_item = resolve_token(token_upper, prev_location)
+            if resolved_item:
+                if resolved_item['type'] == 'waypoint':
+                    resolved.append({
+                        'type': 'waypoint',
+                        'identifier': resolved_item['identifier'],
+                        'lon': resolved_item['lon'],
+                        'lat': resolved_item['lat'],
+                        'location': resolved_item['waypoint']
+                    })
+                    prev_location = resolved_item['waypoint']
+                else:  # airway
+                    resolved.append({
+                        'type': 'airway',
+                        'identifier': resolved_item['identifier']
+                    })
                 continue
 
-            if Airway.objects.filter(identifier=token).exists():
-                resolved.append({'type': 'airway', 'identifier': token})
-                continue
-
-            resolved.append({'type': 'unknown', 'identifier': token})
+            resolved.append({'type': 'unknown', 'identifier': token_clean})
 
         final_coords = []
         final_labels = []
+        unresolved_tokens = []
         for i, item in enumerate(resolved):
             if item['type'] == 'waypoint':
                 final_coords.append([item['lon'], item['lat']])
@@ -132,11 +259,16 @@ def plot_route(request):
                     airway_coords = get_airway_coordinates(item['identifier'], prev_item['location'], next_item['location'])
                     if airway_coords:
                         final_coords.extend(airway_coords[1:-1])
+                    else:
+                        unresolved_tokens.append(item['identifier'])
+                else:
+                    unresolved_tokens.append(item['identifier'])
 
         result.append({
+            'group': route_group,
             'coords': final_coords,
             'labels': final_labels,
-            'unknown': [r['identifier'] for r in resolved if r['type'] == 'unknown'],
+            'unknown': [r['identifier'] for r in resolved if r['type'] == 'unknown'] + unresolved_tokens,
         })
 
     return JsonResponse({'routes': result})

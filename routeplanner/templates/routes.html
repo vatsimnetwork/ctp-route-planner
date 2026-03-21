@@ -1,6 +1,7 @@
 {% extends 'base.html' %}
 
 {% block content %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v8.2.0/ol.css">
 <style>
     .routes-help-text {
         color: var(--muted-text);
@@ -34,9 +35,60 @@
         min-width: 240px;
     }
 
+    .route-string-input {
+        min-width: 320px;
+        min-height: 88px;
+        resize: vertical;
+    }
+
     #filter-bar input::placeholder {
         color: var(--muted-text);
         opacity: 1;
+    }
+
+    .routes-main {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 1rem;
+        align-items: start;
+    }
+
+    .routes-main.map-visible {
+        grid-template-columns: minmax(420px, 58%) minmax(360px, 42%);
+    }
+
+    .routes-table-wrap {
+        min-width: 0;
+    }
+
+    .routes-map-panel {
+        display: none;
+    }
+
+    .routes-main.map-visible .routes-map-panel {
+        display: block;
+    }
+
+    .routes-main.table-hidden {
+        grid-template-columns: 1fr;
+    }
+
+    .routes-main.table-hidden .routes-table-wrap {
+        display: none;
+    }
+
+    .routes-main.table-hidden .routes-map-panel {
+        display: block;
+    }
+
+    .actions-hidden {
+        display: none !important;
+    }
+
+    @media (max-width: 1100px) {
+        .routes-main.map-visible {
+            grid-template-columns: 1fr;
+        }
     }
 </style>
 
@@ -48,6 +100,7 @@
     <p class="routes-help-text mb-3">Identifiers are editable for every route and must remain unique. Group, facilities, and tags are free-text fields. Route, facilities, and tags use the same space-separated syntax.</p>
 
     <div id="alert-container"></div>
+    <div id="plot-warning-container" class="alert alert-warning py-2 mb-3" style="display:none;"></div>
 
     <div id="filter-bar" class="d-flex gap-2 mb-3">
         <input
@@ -59,78 +112,674 @@
             oninput="applyFilters()"
         >
         <button type="button" class="btn btn-outline-secondary btn-sm" onclick="clearFilters()">Clear</button>
+        <button type="button" id="map-toggle-btn" class="btn btn-outline-secondary btn-sm" onclick="showMap()">Show Map</button>
+        <button type="button" id="table-toggle-btn" class="btn btn-outline-secondary btn-sm" onclick="toggleTable()">Hide Table</button>
     </div>
 
-    <table class="table table-striped align-middle">
-        <thead>
-            <tr>
-                <th style="width:260px">Identifier</th>
-                <th style="width:180px">Group</th>
-                <th>Route String</th>
-                <th>Facilities</th>
-                <th>Tags</th>
-                <th style="width:90px">Actions</th>
-            </tr>
-        </thead>
-        <tbody id="routes-tbody">
-            {% for route in routes %}
-            <tr
-                data-pk="{{ route.identifier }}"
-                data-original-pk="{{ route.identifier }}"
-                data-original-group="{{ route.group|escapejs }}"
-                data-original-routestring="{{ route.routestring|escapejs }}"
-                data-original-facilities="{{ route.facilities|escapejs }}"
-                data-original-tags="{{ route.tags|escapejs }}"
-                data-is-new="false"
-            >
-                <td><input type="text" class="form-control form-control-sm route-identifier-input" name="identifier" value="{{ route.identifier }}"></td>
-                <td><input type="text" class="form-control form-control-sm" name="group" value="{{ route.group }}"></td>
-                <td><input type="text" class="form-control form-control-sm" name="routestring" value="{{ route.routestring }}"></td>
-                <td><input type="text" class="form-control form-control-sm" name="facilities" value="{{ route.facilities }}"></td>
-                <td><input type="text" class="form-control form-control-sm" name="tags" value="{{ route.tags }}"></td>
-                <td>
-                    <button type="button" class="btn btn-danger btn-sm" onclick="deleteRow(this)">Delete</button>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    <div id="routes-main" class="routes-main">
+        <div class="routes-table-wrap">
+            <table class="table table-striped align-middle">
+                <thead>
+                    <tr>
+                        <th style="width:260px">Identifier</th>
+                        <th style="width:180px">Group</th>
+                        <th>Route String</th>
+                        <th>Facilities</th>
+                        <th>Tags</th>
+                        <th style="width:90px">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="routes-tbody">
+                    {% for route in routes %}
+                    <tr
+                        data-pk="{{ route.identifier }}"
+                        data-original-pk="{{ route.identifier }}"
+                        data-original-group="{{ route.group|escapejs }}"
+                        data-original-routestring="{{ route.routestring|escapejs }}"
+                        data-original-facilities="{{ route.facilities|escapejs }}"
+                        data-original-tags="{{ route.tags|escapejs }}"
+                        data-is-new="false"
+                    >
+                        <td><input type="text" class="form-control form-control-sm route-identifier-input" name="identifier" value="{{ route.identifier }}"></td>
+                        <td><input type="text" class="form-control form-control-sm" name="group" value="{{ route.group }}"></td>
+                        <td><textarea class="form-control form-control-sm route-string-input" name="routestring" rows="2">{{ route.routestring }}</textarea></td>
+                        <td><input type="text" class="form-control form-control-sm" name="facilities" value="{{ route.facilities }}"></td>
+                        <td><input type="text" class="form-control form-control-sm" name="tags" value="{{ route.tags }}"></td>
+                        <td>
+                            <button type="button" class="btn btn-danger btn-sm" onclick="deleteRow(this)">Delete</button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
 
-    <div class="d-flex gap-2">
+        <div id="map-div" class="routes-map-panel">
+            <div id="map-controls">
+                <div class="control-header">Layers</div>
+                <div class="form-check">
+                    <input type="checkbox" id="toggle-sectors" checked>
+                    <label for="toggle-sectors">FIR Boundaries</label>
+                </div>
+                <div class="form-check">
+                    <input type="checkbox" id="toggle-waypoints" >
+                    <label for="toggle-waypoints">Waypoints</label>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="routes-actions" class="d-flex gap-2">
         <button type="button" class="btn btn-primary" onclick="addRow()">Add</button>
         <button type="button" class="btn btn-success" onclick="saveAll()">Save All</button>
     </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/ol@v8.2.0/dist/ol.js"></script>
 <script>
 const CSRF_TOKEN = '{{ csrf_token }}';
 const SAVE_URL = '{% url "routes_save" %}';
 const DELETE_URL_TEMPLATE = '{% url "route_delete" "__route_id__" %}';
+const ROUTES_DRAFT_STORAGE_KEY = 'ctp-routes-draft-v1';
+const ROUTES_UI_STORAGE_KEY = 'ctp-routes-ui-v1';
+let routePlotRequestController = null;
+let routePlotDebounceTimer = null;
+let isApplyingStoredDraft = false;
 
+function createRowElement(rowState) {
+    const tr = document.createElement('tr');
+    tr.dataset.pk = rowState.pk || '';
+    tr.dataset.originalPk = rowState.originalPk || '';
+    tr.dataset.originalGroup = rowState.originalGroup || '';
+    tr.dataset.originalRoutestring = rowState.originalRoutestring || '';
+    tr.dataset.originalFacilities = rowState.originalFacilities || '';
+    tr.dataset.originalTags = rowState.originalTags || '';
+    tr.dataset.isNew = rowState.isNew ? 'true' : 'false';
+    tr.innerHTML = `
+        <td><input type="text" class="form-control form-control-sm route-identifier-input" name="identifier" value=""></td>
+        <td><input type="text" class="form-control form-control-sm" name="group" value=""></td>
+        <td><textarea class="form-control form-control-sm route-string-input" name="routestring" rows="3"></textarea></td>
+        <td><input type="text" class="form-control form-control-sm" name="facilities" value=""></td>
+        <td><input type="text" class="form-control form-control-sm" name="tags" value=""></td>
+        <td><button type="button" class="btn btn-danger btn-sm" onclick="deleteRow(this)">Delete</button></td>
+    `;
+
+    tr.querySelector('input[name="identifier"]').value = rowState.identifier || '';
+    tr.querySelector('input[name="group"]').value = rowState.group || '';
+    tr.querySelector('[name="routestring"]').value = rowState.routestring || '';
+    tr.querySelector('input[name="facilities"]').value = rowState.facilities || '';
+    tr.querySelector('input[name="tags"]').value = rowState.tags || '';
+    return tr;
+}
+
+function isRowCompletelyEmpty(row) {
+    const identifier = (row.querySelector('input[name="identifier"]')?.value || '').trim();
+    const group = (row.querySelector('input[name="group"]')?.value || '').trim();
+    const routestring = (row.querySelector('[name="routestring"]')?.value || '').trim();
+    const facilities = (row.querySelector('input[name="facilities"]')?.value || '').trim();
+    const tags = (row.querySelector('input[name="tags"]')?.value || '').trim();
+    return !identifier && !group && !routestring && !facilities && !tags;
+}
+
+function ensureTrailingEmptyRow() {
+    const tbody = document.getElementById('routes-tbody');
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+
+    rows.forEach(row => delete row.dataset.placeholder);
+
+    const removableEmptyRows = rows.filter(row => {
+        const isUnsaved = row.dataset.isNew === 'true' && !row.dataset.pk && !row.dataset.originalPk;
+        return isUnsaved && isRowCompletelyEmpty(row);
+    });
+
+    if (removableEmptyRows.length > 1) {
+        removableEmptyRows.slice(0, -1).forEach(row => row.remove());
+    }
+
+    const currentRows = Array.from(tbody.querySelectorAll('tr'));
+    const lastRow = currentRows[currentRows.length - 1];
+    if (!lastRow || !isRowCompletelyEmpty(lastRow)) {
+        const trailingRow = createRowElement({ isNew: true });
+        tbody.appendChild(trailingRow);
+    }
+
+    const refreshedRows = Array.from(tbody.querySelectorAll('tr'));
+    const trailing = refreshedRows[refreshedRows.length - 1];
+    if (trailing && isRowCompletelyEmpty(trailing)) {
+        trailing.dataset.placeholder = 'true';
+    }
+}
+
+function collectRouteRowsState() {
+    const rows = Array.from(document.querySelectorAll('#routes-tbody tr'));
+    return rows.map(row => ({
+        pk: row.dataset.pk || '',
+        originalPk: row.dataset.originalPk || '',
+        originalGroup: row.dataset.originalGroup || '',
+        originalRoutestring: row.dataset.originalRoutestring || '',
+        originalFacilities: row.dataset.originalFacilities || '',
+        originalTags: row.dataset.originalTags || '',
+        isNew: row.dataset.isNew === 'true',
+        identifier: row.querySelector('input[name="identifier"]').value || '',
+        group: row.querySelector('input[name="group"]').value || '',
+        routestring: row.querySelector('[name="routestring"]').value || '',
+        facilities: row.querySelector('input[name="facilities"]').value || '',
+        tags: row.querySelector('input[name="tags"]').value || '',
+    }));
+}
+
+function saveRoutesDraftToStorage() {
+    if (isApplyingStoredDraft) {
+        return;
+    }
+    const payload = {
+        rows: collectRouteRowsState(),
+        filterSearch: document.getElementById('filter-search').value || '',
+    };
+    localStorage.setItem(ROUTES_DRAFT_STORAGE_KEY, JSON.stringify(payload));
+}
+
+function saveUiStateToSessionStorage() {
+    const routesMain = document.getElementById('routes-main');
+    const payload = {
+        mapVisible: routesMain.classList.contains('map-visible'),
+        tableHidden: routesMain.classList.contains('table-hidden'),
+    };
+    sessionStorage.setItem(ROUTES_UI_STORAGE_KEY, JSON.stringify(payload));
+}
+
+function applyLayoutState(mapVisible, tableHidden) {
+    const routesMain = document.getElementById('routes-main');
+    const mapToggleButton = document.getElementById('map-toggle-btn');
+    const tableToggleButton = document.getElementById('table-toggle-btn');
+    const actionsBar = document.getElementById('routes-actions');
+
+    routesMain.classList.toggle('map-visible', !!mapVisible);
+    routesMain.classList.toggle('table-hidden', !!tableHidden);
+
+    if (tableHidden && !mapVisible) {
+        routesMain.classList.add('map-visible');
+        mapVisible = true;
+    }
+
+    mapToggleButton.textContent = mapVisible ? 'Hide Map' : 'Show Map';
+    tableToggleButton.textContent = tableHidden ? 'Show Table' : 'Hide Table';
+    actionsBar.classList.toggle('actions-hidden', !!tableHidden);
+    setTimeout(() => map.updateSize(), 0);
+}
+
+function restoreRoutesDraftFromStorage() {
+    const raw = localStorage.getItem(ROUTES_DRAFT_STORAGE_KEY);
+    if (!raw) {
+        return false;
+    }
+
+    let stored;
+    try {
+        stored = JSON.parse(raw);
+    } catch {
+        return false;
+    }
+
+    isApplyingStoredDraft = true;
+    try {
+        if (Array.isArray(stored.rows)) {
+            const tbody = document.getElementById('routes-tbody');
+            tbody.innerHTML = '';
+            stored.rows.forEach(rowState => tbody.appendChild(createRowElement(rowState)));
+        }
+
+        if (typeof stored.filterSearch === 'string') {
+            document.getElementById('filter-search').value = stored.filterSearch;
+        }
+        applyFilters();
+    } finally {
+        isApplyingStoredDraft = false;
+    }
+
+    return true;
+}
+
+function restoreUiStateFromSessionStorage() {
+    const raw = sessionStorage.getItem(ROUTES_UI_STORAGE_KEY);
+    if (!raw) {
+        return;
+    }
+
+    try {
+        const stored = JSON.parse(raw);
+        applyLayoutState(!!stored.mapVisible, !!stored.tableHidden);
+    } catch {
+        // Ignore invalid persisted UI state.
+    }
+}
+
+function toggleTable() {
+    const routesMain = document.getElementById('routes-main');
+    const toggleButton = document.getElementById('table-toggle-btn');
+    const mapToggleButton = document.getElementById('map-toggle-btn');
+    const nowHidden = routesMain.classList.toggle('table-hidden');
+
+    if (nowHidden && !routesMain.classList.contains('map-visible')) {
+        routesMain.classList.add('map-visible');
+        mapToggleButton.textContent = 'Hide Map';
+    }
+
+    toggleButton.textContent = nowHidden ? 'Show Table' : 'Hide Table';
+    setTimeout(() => map.updateSize(), 0);
+    saveUiStateToSessionStorage();
+    saveRoutesDraftToStorage();
+    scheduleVisibleRoutesPlot();
+}
+
+
+function showMap()
+{
+    const routesMain = document.getElementById('routes-main');
+    const toggleButton = document.getElementById('map-toggle-btn');
+    const tableToggleButton = document.getElementById('table-toggle-btn');
+    const nowVisible = routesMain.classList.toggle('map-visible');
+
+    if (!nowVisible && routesMain.classList.contains('table-hidden')) {
+        routesMain.classList.remove('table-hidden');
+        tableToggleButton.textContent = 'Hide Table';
+    }
+
+    toggleButton.textContent = nowVisible ? 'Hide Map' : 'Show Map';
+    setTimeout(() => map.updateSize(), 0);
+    saveUiStateToSessionStorage();
+    saveRoutesDraftToStorage();
+    scheduleVisibleRoutesPlot();
+}
+
+function clearRoutePlot() {
+    routeLineSource.clear();
+    waypointSource.clear();
+}
+
+function renderPlotWarnings(tokens) {
+    const container = document.getElementById('plot-warning-container');
+    if (!tokens.length) {
+        container.style.display = 'none';
+        container.textContent = '';
+        return;
+    }
+
+    container.textContent = `Unknown tokens: ${tokens.join(', ')}`;
+    container.style.display = 'block';
+}
+
+function collectVisibleRouteStrings() {
+    const rows = Array.from(document.querySelectorAll('#routes-tbody tr'));
+    return rows
+        .filter(row => row.style.display !== 'none')
+        .map(row => normalizeTokenField((row.querySelector('[name="routestring"]')?.value || '')))
+        .filter(Boolean);
+}
+
+function plotVisibleRoutesOnMap() {
+    const routesMain = document.getElementById('routes-main');
+    if (!routesMain.classList.contains('map-visible')) {
+        clearRoutePlot();
+        renderPlotWarnings([]);
+        return;
+    }
+
+    const visibleRoutes = collectVisibleRouteStrings();
+    clearRoutePlot();
+
+    if (!visibleRoutes.length) {
+        renderPlotWarnings([]);
+        return;
+    }
+
+    if (routePlotRequestController) {
+        routePlotRequestController.abort();
+    }
+
+    routePlotRequestController = new AbortController();
+    fetch('/routeplotter/plotroute/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': CSRF_TOKEN,
+        },
+        body: JSON.stringify({ route: visibleRoutes.join('\n') }),
+        signal: routePlotRequestController.signal,
+    })
+    .then(r => r.json())
+    .then(data => {
+        const unknownTokens = new Set();
+        (data.routes || []).forEach(route => {
+            if (route.coords && route.coords.length > 1) {
+                const lineFeature = new ol.Feature({
+                    geometry: new ol.geom.LineString(route.coords.map(c => ol.proj.fromLonLat(c))),
+                    group: (route.group || '').trim().toUpperCase(),
+                });
+                routeLineSource.addFeature(lineFeature);
+            }
+            (route.labels || []).forEach(wp => addWaypoint(wp.lon, wp.lat, wp.identifier));
+            (route.unknown || []).forEach(token => unknownTokens.add(token));
+        });
+        renderPlotWarnings(Array.from(unknownTokens).sort());
+    })
+    .catch(err => {
+        if (err.name !== 'AbortError') {
+            console.error('visible route plotting failed:', err);
+        }
+        renderPlotWarnings([]);
+    });
+}
+
+function scheduleVisibleRoutesPlot() {
+    if (routePlotDebounceTimer) {
+        clearTimeout(routePlotDebounceTimer);
+    }
+    routePlotDebounceTimer = setTimeout(plotVisibleRoutesOnMap, 120);
+}
+    function tileUrlForTheme(theme) {
+        return theme === 'dark'
+            ? 'https://{a-c}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png'
+            : 'https://{a-c}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png';
+    }
+
+    function waypointPaletteForTheme(theme) {
+        return theme === 'dark'
+            ? { point: '#ffffff', text: '#ffffff', textStroke: '#000000' }
+            : { point: '#0f172a', text: '#111827', textStroke: '#ffffff' };
+    }
+
+    const WAYPOINT_POINT_MIN_ZOOM = 6;
+    const WAYPOINT_LABEL_MIN_ZOOM = 8;
+
+    function createWaypointPointStyle(palette) {
+        return new ol.style.Style({
+            image: new ol.style.Circle({
+                radius: 1,
+                fill: new ol.style.Fill({ color: palette.point }),
+                stroke: new ol.style.Stroke({ color: palette.point, width: 1 }),
+                opacity: 0.8
+            })
+        });
+    }
+
+    const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+    let waypointPalette = waypointPaletteForTheme(currentTheme);
+    let allWaypointsPointStyle = createWaypointPointStyle(waypointPalette);
+    const waypointLabelStyleCache = new Map();
+
+    function getWaypointLabelStyle(identifier) {
+        let style = waypointLabelStyleCache.get(identifier);
+        if (style) return style;
+
+        style = new ol.style.Style({
+            text: new ol.style.Text({
+                text: identifier,
+                offsetY: -6,
+                fill: new ol.style.Fill({ color: waypointPalette.text }),
+                font: 'bold 9px monospace',
+                stroke: new ol.style.Stroke({ color: waypointPalette.textStroke, width: 1, opacity: 0.9 })
+            })
+        });
+        waypointLabelStyleCache.set(identifier, style);
+        return style;
+    }
+
+    const baseLayer = new ol.layer.Tile({
+        source: new ol.source.XYZ({
+            url: tileUrlForTheme(currentTheme)
+        })
+    });
+
+    const map = new ol.Map({
+        target: 'map-div',
+        layers: [baseLayer],
+        view: new ol.View({
+            center: ol.proj.fromLonLat([-30, 40]),
+            zoom: 1
+        })
+    });
+
+    const firSource = new ol.source.Vector({
+        url: '/routeplotter/getfirs/', 
+        format: new ol.format.GeoJSON()
+    });
+
+    function createWaypointsSource() {
+        return new ol.source.Vector();
+    }
+
+    let allWaypointsSource = createWaypointsSource();
+    let waypointFetchController = null;
+
+
+    // layer for the fir boundaries
+    const firLayer = new ol.layer.Vector({
+        source: firSource,
+        style: new ol.style.Style({
+            stroke: new ol.style.Stroke({
+                color: '#00ffcc',
+                width: 0.1,
+                opacity: 0.5
+            })
+        })
+    });
+
+    //layer for the firlabels
+    const firLabelLayer = new ol.layer.Vector({
+        source: firSource,
+        declutter: true,
+        style: function(feature) {
+            const props = feature.getProperties();
+            const lon = props.label_lon;
+            const lat = props.label_lat;
+            const identifier = props.id || props.name;
+
+            if (!lon || !lat || !identifier) return null;
+
+            return new ol.style.Style({
+                geometry: new ol.geom.Point(ol.proj.fromLonLat([lon, lat])),
+                text: new ol.style.Text({
+                    text: identifier,
+                    font: 'bold 10px monospace',
+                    fill: new ol.style.Fill({ color: 'rgba(0, 255, 204, 0.6)' }),
+                    stroke: new ol.style.Stroke({ color: 'rgba(0, 0, 0, 0.45)', width: 1 }),
+                    textAlign: 'center',
+                    
+                })
+            });
+        }
+    });
+
+    map.addLayer(firLayer);
+    map.addLayer(firLabelLayer);
+
+    const allWaypointsLayer = new ol.layer.Vector({
+        source: allWaypointsSource,
+        zIndex: 8,
+        style: allWaypointsPointStyle
+    });
+
+    const allWaypointsLabelLayer = new ol.layer.Vector({
+        source: allWaypointsSource,
+        declutter: true,
+        zIndex: 9,
+        style: function(feature) {
+            const identifier = feature.get('identifier');
+            if (!identifier) return null;
+            return getWaypointLabelStyle(identifier);
+        }
+    });
+
+    map.addLayer(allWaypointsLayer);
+    map.addLayer(allWaypointsLabelLayer);
+
+    function replaceWaypointsSource() {
+        allWaypointsSource = createWaypointsSource();
+        allWaypointsLayer.setSource(allWaypointsSource);
+        allWaypointsLabelLayer.setSource(allWaypointsSource);
+    }
+
+    function loadVisibleWaypoints() {
+        if (waypointFetchController) waypointFetchController.abort();
+
+        const enabled = document.getElementById('toggle-waypoints').checked;
+        const zoom = map.getView().getZoom() || 0;
+        const showPoints = enabled && zoom >= WAYPOINT_POINT_MIN_ZOOM;
+        const showLabels = enabled && zoom >= WAYPOINT_LABEL_MIN_ZOOM;
+
+        allWaypointsLayer.setVisible(showPoints);
+        allWaypointsLabelLayer.setVisible(showLabels);
+
+        if (!showPoints) {
+            allWaypointsSource.clear();
+            return;
+        }
+
+        const extent = map.getView().calculateExtent(map.getSize());
+        const [minX, minY, maxX, maxY] = extent;
+        const [minLon, minLat] = ol.proj.toLonLat([minX, minY]);
+        const [maxLon, maxLat] = ol.proj.toLonLat([maxX, maxY]);
+
+        waypointFetchController = new AbortController();
+        fetch(
+            `/routeplotter/getwaypoints/?minLon=${minLon}&minLat=${minLat}&maxLon=${maxLon}&maxLat=${maxLat}`,
+            { signal: waypointFetchController.signal }
+        )
+            .then(r => r.json())
+            .then(data => {
+                const features = new ol.format.GeoJSON().readFeatures(data, { featureProjection: 'EPSG:3857' });
+                allWaypointsSource.clear();
+                allWaypointsSource.addFeatures(features);
+            })
+            .catch(() => {});
+    }
+
+    map.on('moveend', loadVisibleWaypoints);
+
+    const routeLineSource = new ol.source.Vector();
+    const routeColorPalette = [
+        '#f87171',
+        '#38bdf8',
+        '#34d399',
+        '#fbbf24',
+        '#a78bfa',
+        '#fb7185',
+        '#06b6d4',
+        '#84cc16',
+        '#f59e0b',
+        '#8b5cf6',
+    ];
+    const fixedGroupColors = {
+        EMEA: '#ef4444',
+        AMAS: '#0ea5e9',
+        APAC: '#22c55e',
+        NAM: '#f59e0b',
+        LATAM: '#a855f7',
+    };
+    const groupColorMap = new Map();
+
+    function getRouteColor(group) {
+        const normalizedGroup = (group || '').trim().toUpperCase();
+        const key = normalizedGroup || '__UNGROUPED__';
+        if (fixedGroupColors[key]) {
+            return fixedGroupColors[key];
+        }
+        if (!groupColorMap.has(key)) {
+            const colorIndex = groupColorMap.size % routeColorPalette.length;
+            groupColorMap.set(key, routeColorPalette[colorIndex]);
+        }
+        return groupColorMap.get(key);
+    }
+
+    const routeLineLayer = new ol.layer.Vector({
+        source: routeLineSource,
+        zIndex: 10,
+        style: function(feature) {
+            const color = getRouteColor(feature.get('group'));
+            return [
+                new ol.style.Style({ stroke: new ol.style.Stroke({ color: 'rgba(0,0,0,0.45)', width: 4 }) }),
+                new ol.style.Style({ stroke: new ol.style.Stroke({ color: color, width: 2 }) }),
+            ];
+        }
+    });
+    map.addLayer(routeLineLayer);
+
+    const waypointSource = new ol.source.Vector();
+    const waypointLayer = new ol.layer.Vector({ 
+        source: waypointSource,
+        zIndex: 11
+    });
+    map.addLayer(waypointLayer);
+
+    document.getElementById('toggle-sectors').addEventListener('change', function() {
+        const visible = this.checked;
+        firLayer.setVisible(visible);
+        firLabelLayer.setVisible(visible);
+    });
+
+    document.getElementById('toggle-waypoints').addEventListener('change', function() {
+        loadVisibleWaypoints();
+    });
+
+    function addWaypoint(lon, lat, name) {
+        const feature = new ol.Feature({
+            geometry: new ol.geom.Point(ol.proj.fromLonLat([lon, lat])),
+            name: name
+        });
+        feature.setStyle(new ol.style.Style({
+            image: new ol.style.Circle({
+                radius: 3,
+                fill: new ol.style.Fill({color: 'white'}),
+                stroke: new ol.style.Stroke({color: 'white', width: 1})
+            }),
+            text: new ol.style.Text({
+                text: name,
+                offsetY: -8,
+                fill: new ol.style.Fill({color: '#fff'}),
+                font: 'bold 9px monospace',
+                stroke: new ol.style.Stroke({color: '#000', width: 1, opacity: 0.7})
+            })
+        }));
+        waypointSource.addFeature(feature);
+    }
+
+    
+
+    window.addEventListener('themechange', function (event) {
+        const theme = event.detail && event.detail.theme ? event.detail.theme : 'light';
+        waypointPalette = waypointPaletteForTheme(theme);
+        allWaypointsPointStyle = createWaypointPointStyle(waypointPalette);
+        waypointLabelStyleCache.clear();
+        baseLayer.setSource(new ol.source.XYZ({
+            url: tileUrlForTheme(theme)
+        }));
+        allWaypointsLayer.setStyle(allWaypointsPointStyle);
+        allWaypointsLayer.changed();
+        allWaypointsLabelLayer.changed();
+    });
+
+    loadVisibleWaypoints();
+    window.addEventListener('resize', () => map.updateSize());
 function normalizeTokenField(value) {
     return value.replace(/[,;]/g, ' ').split(/\s+/).map(part => part.trim()).filter(Boolean).join(' ');
 }
 
 function addRow() {
+    ensureTrailingEmptyRow();
+    const placeholderRow = document.querySelector('#routes-tbody tr[data-placeholder="true"]');
+    if (placeholderRow) {
+        placeholderRow.querySelector('input[name="identifier"]').focus();
+        return;
+    }
+
     const tbody = document.getElementById('routes-tbody');
-    const tr = document.createElement('tr');
-    tr.dataset.pk = '';
-    tr.dataset.originalPk = '';
-    tr.dataset.originalGroup = '';
-    tr.dataset.originalRoutestring = '';
-    tr.dataset.originalFacilities = '';
-    tr.dataset.originalTags = '';
-    tr.dataset.isNew = 'true';
-    tr.innerHTML = `
-        <td><input type="text" class="form-control form-control-sm route-identifier-input" name="identifier" value=""></td>
-        <td><input type="text" class="form-control form-control-sm" name="group" value=""></td>
-        <td><input type="text" class="form-control form-control-sm" name="routestring" value=""></td>
-        <td><input type="text" class="form-control form-control-sm" name="facilities" value=""></td>
-        <td><input type="text" class="form-control form-control-sm" name="tags" value=""></td>
-        <td><button type="button" class="btn btn-danger btn-sm" onclick="deleteRow(this)">Delete</button></td>
-    `;
+    const tr = createRowElement({ isNew: true });
     tbody.appendChild(tr);
+    ensureTrailingEmptyRow();
     tr.querySelector('input[name="identifier"]').focus();
+    saveRoutesDraftToStorage();
+    scheduleVisibleRoutesPlot();
 }
 
 function buildDeleteUrl(identifier) {
@@ -141,6 +790,8 @@ async function deleteRow(btn) {
     const row = btn.closest('tr');
     if (!row.dataset.originalPk) {
         row.remove();
+        saveRoutesDraftToStorage();
+        scheduleVisibleRoutesPlot();
         return;
     }
 
@@ -170,7 +821,10 @@ async function deleteRow(btn) {
         }
 
         row.remove();
+        ensureTrailingEmptyRow();
         showAlert('Route deleted successfully.', 'success');
+        saveRoutesDraftToStorage();
+        scheduleVisibleRoutesPlot();
     } catch (error) {
         btn.disabled = false;
         showAlert('Error: ' + error.message, 'danger');
@@ -180,7 +834,7 @@ async function deleteRow(btn) {
 function isRowChanged(row) {
     const identifier = row.querySelector('input[name="identifier"]').value.trim().toUpperCase();
     const group = row.querySelector('input[name="group"]').value.trim();
-    const routestring = normalizeTokenField(row.querySelector('input[name="routestring"]').value);
+    const routestring = normalizeTokenField(row.querySelector('[name="routestring"]').value);
     const facilities = normalizeTokenField(row.querySelector('input[name="facilities"]').value);
     const tags = normalizeTokenField(row.querySelector('input[name="tags"]').value);
     if (row.dataset.isNew === 'true') {
@@ -210,7 +864,7 @@ function saveAll() {
         identifierInput.value = identifierInput.value.trim().toUpperCase();
         const identifier = identifierInput.value;
         const group = row.querySelector('input[name="group"]').value.trim();
-        const routeInput = row.querySelector('input[name="routestring"]');
+        const routeInput = row.querySelector('[name="routestring"]');
         const routestring = normalizeTokenField(routeInput.value);
         routeInput.value = routestring;
         const facilitiesInput = row.querySelector('input[name="facilities"]');
@@ -257,6 +911,7 @@ function saveAll() {
             if (typeof result.revision_number !== 'undefined') {
                 document.getElementById('current-revision-number').textContent = result.revision_number;
             }
+            localStorage.removeItem(ROUTES_DRAFT_STORAGE_KEY);
             showAlert(`Routes saved successfully. Revision set ${result.revision_number}.`, 'success');
             window.location.reload();
         } else {
@@ -278,23 +933,38 @@ document.getElementById('routes-tbody').addEventListener('input', event => {
         event.target.value = event.target.value.toUpperCase();
         event.target.setSelectionRange(cur, cur);
     }
+    ensureTrailingEmptyRow();
+    saveRoutesDraftToStorage();
     applyFilters();
+    scheduleVisibleRoutesPlot();
 });
 
 document.getElementById('routes-tbody').addEventListener('change', event => {
     if (['routestring', 'facilities', 'tags'].includes(event.target.name)) {
         event.target.value = normalizeTokenField(event.target.value);
     }
+    ensureTrailingEmptyRow();
+    saveRoutesDraftToStorage();
     applyFilters();
+    scheduleVisibleRoutesPlot();
 });
 
 function applyFilters() {
     const searchTerm = document.getElementById('filter-search').value.trim().toLowerCase();
 
-    document.querySelectorAll('#routes-tbody tr').forEach(row => {
+    ensureTrailingEmptyRow();
+    const rows = Array.from(document.querySelectorAll('#routes-tbody tr'));
+    const trailingPlaceholder = rows.length ? rows[rows.length - 1] : null;
+
+    rows.forEach(row => {
+        if (trailingPlaceholder && row === trailingPlaceholder && row.dataset.placeholder === 'true') {
+            row.style.display = '';
+            return;
+        }
+
         const identifier = (row.querySelector('input[name="identifier"]').value || '').toLowerCase();
         const group = (row.querySelector('input[name="group"]').value || '').toLowerCase();
-        const routestring = (row.querySelector('input[name="routestring"]').value || '').toLowerCase();
+        const routestring = (row.querySelector('[name="routestring"]').value || '').toLowerCase();
         const facilities = (row.querySelector('input[name="facilities"]').value || '').toLowerCase();
         const tags = (row.querySelector('input[name="tags"]').value || '').toLowerCase();
 
@@ -307,11 +977,78 @@ function applyFilters() {
 
         row.style.display = matchesSearch ? '' : 'none';
     });
+
+    scheduleVisibleRoutesPlot();
 }
 
 function clearFilters() {
     document.getElementById('filter-search').value = '';
+    saveRoutesDraftToStorage();
     applyFilters();
 }
+
+document.getElementById('filter-search').addEventListener('input', () => {
+    saveRoutesDraftToStorage();
+    applyFilters();
+});
+
+restoreRoutesDraftFromStorage();
+ensureTrailingEmptyRow();
+restoreUiStateFromSessionStorage();
+window.addEventListener('storage', event => {
+    if (event.key === ROUTES_DRAFT_STORAGE_KEY) {
+        const restored = restoreRoutesDraftFromStorage();
+
+        // If a draft is deleted in another window (e.g. after save), clear plotted lines here.
+        if (!restored) {
+            clearRoutePlot();
+            return;
+        }
+
+        map.updateSize();
+        plotVisibleRoutesOnMap();
+    }
+});
+
+scheduleVisibleRoutesPlot();
 </script>
+<style>
+    #map-div {
+        position: sticky;
+        top: 1rem;
+        width: 100%;
+        min-height: 560px;
+        height: calc(100vh - 180px);
+        background-color: #f8fafc;
+        border: 1px solid #d0d7e2;
+        border-radius: 10px;
+        overflow: hidden;
+    }
+    #map-controls {
+        position: absolute;
+        bottom: 20px; right: 20px;
+        background: rgba(248, 250, 252, 0.95);
+        color: #1f2937;
+        padding: 15px;
+        border: 1px solid #cbd5e1;
+        border-radius: 2px;
+        z-index: 1000;
+        font-family: 'Courier New', monospace;
+        font-size: 11px;
+    }
+    .control-header {
+        border-bottom: 1px dashed #64748b;
+        margin-bottom: 10px;
+        letter-spacing: 2px;
+    }
+
+    @media (max-width: 1100px) {
+        #map-div {
+            position: relative;
+            top: 0;
+            height: 460px;
+            min-height: 460px;
+        }
+    }
+</style>
 {% endblock %}

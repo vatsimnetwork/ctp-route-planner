@@ -176,13 +176,10 @@
                         </button>
                     </li>
                     {% if request.is_session_valid %} 
-                        {% if "routeplanner_routeplotter_acces" in request.user_roles %}
-                            <li class="nav-item"><a class="nav-link" href="/routeplotter">Route Plotter</a></li>
-                        {% endif %}
-                        {% if "routeplanner_route_acces" in request.user_roles %}
+                        {% if "administrators" in request.user_roles or "route_staff" in request.user_roles or "developers" in request.user_roles %}
                             <li class="nav-item"><a class="nav-link" href="/routes/">Routes</a></li>
                         {% endif %}
-                        {% if "routeplanner_setting_acces" in request.user_roles %}
+                        {% if "administrators" in request.user_roles or "developers" in request.user_roles %}
                             <li class="nav-item dropdown">
                                 <a class="nav-link dropdown-toggle" href="#" id="navbarDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
                                     Settings
