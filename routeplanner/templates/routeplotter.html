@@ -39,6 +39,9 @@
 
 <script>
     const CSRF_TOKEN = '{{ csrf_token }}';
+    const PLOT_ROUTE_URL = '{% url "plot_route" %}';
+    const GET_FIRS_URL = '{% url "fir_geojson" %}';
+    const GET_WAYPOINTS_BASE_URL = '{% url "waypoints_geojson" %}';
 
     function tileUrlForTheme(theme) {
         return theme === 'dark'
@@ -104,7 +107,7 @@
     });
 
     const firSource = new ol.source.Vector({
-        url: '/routeplotter/getfirs/', 
+        url: GET_FIRS_URL,
         format: new ol.format.GeoJSON()
     });
 
@@ -206,7 +209,7 @@
 
         waypointFetchController = new AbortController();
         fetch(
-            `/routeplotter/getwaypoints/?minLon=${minLon}&minLat=${minLat}&maxLon=${maxLon}&maxLat=${maxLat}`,
+            `${GET_WAYPOINTS_BASE_URL}?minLon=${minLon}&minLat=${minLat}&maxLon=${maxLon}&maxLat=${maxLat}`,
             { signal: waypointFetchController.signal }
         )
             .then(r => r.json())
@@ -426,7 +429,7 @@
         waypointSource.clear();
         routeLineSource.clear();
 
-        fetch('/routeplotter/plotroute/', {
+        fetch(PLOT_ROUTE_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
             body: JSON.stringify({ route: routeData })

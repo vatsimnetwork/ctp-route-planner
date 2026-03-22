@@ -180,6 +180,9 @@
 const CSRF_TOKEN = '{{ csrf_token }}';
 const SAVE_URL = '{% url "routes_save" %}';
 const DELETE_URL_TEMPLATE = '{% url "route_delete" "__route_id__" %}';
+const PLOT_ROUTE_URL = '{% url "plot_route" %}';
+const GET_FIRS_URL = '{% url "fir_geojson" %}';
+const GET_WAYPOINTS_BASE_URL = '{% url "waypoints_geojson" %}';
 const ROUTES_DRAFT_STORAGE_KEY = 'ctp-routes-draft-v1';
 const ROUTES_UI_STORAGE_KEY = 'ctp-routes-ui-v1';
 let routePlotRequestController = null;
@@ -438,7 +441,7 @@ function plotVisibleRoutesOnMap() {
     }
 
     routePlotRequestController = new AbortController();
-    fetch('/routeplotter/plotroute/', {
+    fetch(PLOT_ROUTE_URL, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -541,7 +544,7 @@ function scheduleVisibleRoutesPlot() {
     });
 
     const firSource = new ol.source.Vector({
-        url: '/routeplotter/getfirs/', 
+        url: GET_FIRS_URL,
         format: new ol.format.GeoJSON()
     });
 
@@ -643,7 +646,7 @@ function scheduleVisibleRoutesPlot() {
 
         waypointFetchController = new AbortController();
         fetch(
-            `/routeplotter/getwaypoints/?minLon=${minLon}&minLat=${minLat}&maxLon=${maxLon}&maxLat=${maxLat}`,
+            `${GET_WAYPOINTS_BASE_URL}?minLon=${minLon}&minLat=${minLat}&maxLon=${maxLon}&maxLat=${maxLat}`,
             { signal: waypointFetchController.signal }
         )
             .then(r => r.json())

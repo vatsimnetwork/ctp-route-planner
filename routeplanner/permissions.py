@@ -1,7 +1,7 @@
 from functools import wraps
 from django.http import JsonResponse
 
-WRITE_ROLES = {'route_staff', 'developers', 'administrators'}
+WRITE_ROLES = {'route_staff', 'developer', 'administrator'}
 
 
 def write_access_required(view_func):
