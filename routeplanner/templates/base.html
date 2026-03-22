@@ -175,27 +175,27 @@
                             </svg>
                         </button>
                     </li>
-                    {% if request.is_session_valid %} 
-                        {% if "administrator" in request.user_roles or "route_staff" in request.user_roles or "developers" in request.user_roles %}
-                            <li class="nav-item"><a class="nav-link" href="/routes/">Routes</a></li>
+                    {% if request.is_session_valid %}
+                        {% if "administrator" in request.user_roles or "route_staff" in request.user_roles or "developer" in request.user_roles %}
+                            <li class="nav-item"><a class="nav-link" href="{% url 'routes' %}">Routes</a></li>
                         {% endif %}
-                        {% if "administrator" in request.user_roles or "developers" in request.user_roles %}
+                        {% if "administrator" in request.user_roles or "developer" in request.user_roles %}
                             <li class="nav-item dropdown">
                                 <a class="nav-link dropdown-toggle" href="#" id="navbarDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
                                     Settings
                                 </a>
                                 <ul class="dropdown-menu">
-                                    <li><a class="dropdown-item" href="/settings/waypoints/">Waypoints</a></li>
-                                    <li><a class="dropdown-item" href="/settings/airways/">Airways</a></li>
-                                    <li><a class="dropdown-item" href="/settings/firboundaries/">FIR Boundaries</a></li>
+                                    <li><a class="dropdown-item" href="{% url 'waypoint_settings' %}">Waypoints</a></li>
+                                    <li><a class="dropdown-item" href="{% url 'airways_settings' %}">Airways</a></li>
+                                    <li><a class="dropdown-item" href="{% url 'firboundaries_settings' %}">FIR Boundaries</a></li>
                                 </ul>
                             </li>
                         {% endif %}
-                        <li class="nav-item"><a class="nav-link fw-bold text-primary" href="/auth/logout/">Logout</a></li>
+                        <li class="nav-item"><a class="nav-link fw-bold text-primary" href="{% url 'logout' %}">Logout</a></li>
 
 
                     {% else %}
-                        <li class="nav-item"><a class="nav-link fw-bold text-primary" href="/auth/login/">Login</a></li>
+                        <li class="nav-item"><a class="nav-link fw-bold text-primary" href="{% url 'login' %}">Login</a></li>
                     {% endif %}
                 </ul>
             </div>
