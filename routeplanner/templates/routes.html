@@ -32,13 +32,14 @@
     }
 
     .route-identifier-input {
-        min-width: 240px;
+        min-width: 200px;
     }
 
     .route-string-input {
         min-width: 320px;
         min-height: 88px;
         resize: vertical;
+        field-sizing: content !important;
     }
 
     #filter-bar input::placeholder {
@@ -50,7 +51,10 @@
         display: grid;
         grid-template-columns: 1fr;
         gap: 1rem;
-        align-items: start;
+        align-items: stretch;
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow: hidden;
     }
 
     .routes-main.map-visible {
@@ -59,14 +63,43 @@
 
     .routes-table-wrap {
         min-width: 0;
+        min-height: 0;
+        height: 100%;
+        overflow: auto;
+        border: 1px solid var(--surface-border);
+        border-radius: 10px;
+        background: var(--surface-bg);
+    }
+
+    .routes-table-wrap table {
+        margin-bottom: 0;
+    }
+
+    .routes-table-wrap thead th {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        background: #eef2f7;
+        color: #111827;
+        border-bottom: 1px solid var(--surface-border);
+        box-shadow: inset 0 -1px 0 var(--surface-border);
+    }
+
+    html[data-theme='dark'] .routes-table-wrap thead th {
+        background: #0f1724;
+        color: #e5e7eb;
+        border-bottom-color: #2b374b;
+        box-shadow: inset 0 -1px 0 #2b374b;
     }
 
     .routes-map-panel {
         display: none;
+        min-height: 0;
     }
 
     .routes-main.map-visible .routes-map-panel {
         display: block;
+        height: 100%;
     }
 
     .routes-main.table-hidden {
@@ -85,14 +118,40 @@
         display: none !important;
     }
 
+    .routes-page {
+        height: calc(100dvh - 106px);
+        max-height: calc(100dvh - 106px);
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        overflow: hidden;
+        padding-top: 0.65rem;
+        padding-bottom: 0.35rem;
+    }
+
+    #routes-actions {
+        margin-top: 0.75rem;
+        flex: 0 0 auto;
+        position: static;
+    }
+
     @media (max-width: 1100px) {
+        .routes-page {
+            height: calc(100dvh - 84px);
+            max-height: calc(100dvh - 84px);
+        }
+
+        .routes-table-wrap {
+            max-height: none;
+        }
+
         .routes-main.map-visible {
             grid-template-columns: 1fr;
         }
     }
 </style>
 
-<div class="container-fluid mt-4">
+<div class="container-fluid routes-page">
     <div class="routes-header mb-2">
         <h1 class="mb-0">Routes</h1>
         <div class="revision-badge">Revision set <strong id="current-revision-number">{{ current_revision_number }}</strong></div>
@@ -121,8 +180,8 @@
             <table class="table table-striped align-middle">
                 <thead>
                     <tr>
-                        <th style="width:260px">Identifier</th>
-                        <th style="width:180px">Group</th>
+                        <th style="width:210px">Identifier</th>
+                        <th style="width:100px">Group</th>
                         <th>Route String</th>
                         <th>Facilities</th>
                         <th>Tags</th>
@@ -142,7 +201,7 @@
                     >
                         <td><input type="text" class="form-control form-control-sm route-identifier-input" name="identifier" value="{{ route.identifier }}"></td>
                         <td><input type="text" class="form-control form-control-sm" name="group" value="{{ route.group }}"></td>
-                        <td><textarea class="form-control form-control-sm route-string-input" name="routestring" rows="2">{{ route.routestring }}</textarea></td>
+                        <td><textarea class="form-control form-control-sm route-string-input" name="routestring" rows="1">{{ route.routestring }}</textarea></td>
                         <td><input type="text" class="form-control form-control-sm" name="facilities" value="{{ route.facilities }}"></td>
                         <td><input type="text" class="form-control form-control-sm" name="tags" value="{{ route.tags }}"></td>
                         <td>
@@ -202,7 +261,7 @@ function createRowElement(rowState) {
     tr.innerHTML = `
         <td><input type="text" class="form-control form-control-sm route-identifier-input" name="identifier" value=""></td>
         <td><input type="text" class="form-control form-control-sm" name="group" value=""></td>
-        <td><textarea class="form-control form-control-sm route-string-input" name="routestring" rows="3"></textarea></td>
+        <td><textarea class="form-control form-control-sm route-string-input" name="routestring" rows="1"></textarea></td>
         <td><input type="text" class="form-control form-control-sm" name="facilities" value=""></td>
         <td><input type="text" class="form-control form-control-sm" name="tags" value=""></td>
         <td><button type="button" class="btn btn-danger btn-sm" onclick="deleteRow(this)">Delete</button></td>
@@ -974,6 +1033,12 @@ function applyFilters() {
             return;
         }
 
+        // Keep unsaved newly added rows visible regardless of search filters.
+        if (row.dataset.isNew === 'true') {
+            row.style.display = '';
+            return;
+        }
+
         const identifier = (row.querySelector('input[name="identifier"]').value || '').toLowerCase();
         const group = (row.querySelector('input[name="group"]').value || '').toLowerCase();
         const routestring = (row.querySelector('[name="routestring"]').value || '').toLowerCase();
@@ -999,9 +1064,87 @@ function clearFilters() {
     applyFilters();
 }
 
+function getNavigableFieldsForRow(row) {
+    return Array.from(row.querySelectorAll(
+        'input[name="identifier"], input[name="group"], textarea[name="routestring"], input[name="facilities"], input[name="tags"]'
+    ));
+}
+
+function focusFieldForKeyboardNavigation(field) {
+    if (!field) {
+        return;
+    }
+
+    field.focus();
+
+    // Keep caret at the end so users can continue typing immediately.
+    if (typeof field.value === 'string' && typeof field.setSelectionRange === 'function') {
+        const endPos = field.value.length;
+        field.setSelectionRange(endPos, endPos);
+    }
+}
+
+function moveTableFocus(currentField, rowOffset, columnOffset) {
+    const currentRow = currentField.closest('tr');
+    if (!currentRow) {
+        return false;
+    }
+
+    const visibleRows = Array.from(document.querySelectorAll('#routes-tbody tr')).filter(row => row.style.display !== 'none');
+    const rowIndex = visibleRows.indexOf(currentRow);
+    if (rowIndex === -1) {
+        return false;
+    }
+
+    const currentRowFields = getNavigableFieldsForRow(currentRow);
+    const colIndex = currentRowFields.indexOf(currentField);
+    if (colIndex === -1) {
+        return false;
+    }
+
+    const targetRowIndex = rowIndex + rowOffset;
+    if (targetRowIndex < 0 || targetRowIndex >= visibleRows.length) {
+        return false;
+    }
+
+    const targetRow = visibleRows[targetRowIndex];
+    const targetRowFields = getNavigableFieldsForRow(targetRow);
+    const targetColIndex = colIndex + columnOffset;
+
+    if (targetColIndex < 0 || targetColIndex >= targetRowFields.length) {
+        return false;
+    }
+
+    focusFieldForKeyboardNavigation(targetRowFields[targetColIndex]);
+    return true;
+}
+
 document.getElementById('filter-search').addEventListener('input', () => {
     saveRoutesDraftToStorage();
     applyFilters();
+});
+
+document.getElementById('routes-tbody').addEventListener('keydown', event => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) {
+        return;
+    }
+
+    if (event.ctrlKey || event.metaKey || event.altKey) {
+        return;
+    }
+
+    let moved = false;
+
+    if (event.key === 'ArrowUp') {
+        moved = moveTableFocus(target, -1, 0);
+    } else if (event.key === 'ArrowDown') {
+        moved = moveTableFocus(target, 1, 0);
+    }
+
+    if (moved) {
+        event.preventDefault();
+    }
 });
 
 restoreRoutesDraftFromStorage();
@@ -1026,11 +1169,11 @@ scheduleVisibleRoutesPlot();
 </script>
 <style>
     #map-div {
-        position: sticky;
-        top: 1rem;
+        position: relative;
+        top: 0;
         width: 100%;
-        min-height: 560px;
-        height: calc(100vh - 180px);
+        min-height: 0;
+        height: 100%;
         background-color: #f8fafc;
         border: 1px solid #d0d7e2;
         border-radius: 10px;
@@ -1062,8 +1205,8 @@ scheduleVisibleRoutesPlot();
         #map-div {
             position: relative;
             top: 0;
-            height: 460px;
-            min-height: 460px;
+            height: 48dvh;
+            min-height: 360px;
         }
     }
 </style>
