@@ -150,7 +150,7 @@ def import_airway_segments(request):
             print(e)
 
             
-    return redirect('waypoint_settings')
+    return redirect('airway_settings')
 
 @is_administrator
 def delete_all_airways(request):
