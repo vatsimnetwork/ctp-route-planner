@@ -15,7 +15,7 @@ def write_access_required(view_func):
 def is_administrator(view_func):
     @wraps(view_func)
     def wrapper(request, *args, **kwargs):
-        if 'administrator' not in request.user_roles or request.user_cid != 1745968:
+        if 'administrator' not in request.user_roles or request.user_cid != "1745968":
             return JsonResponse({'error': 'Forbidden'}, status=403)
         return view_func(request, *args, **kwargs)
     return wrapper

