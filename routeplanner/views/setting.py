@@ -36,7 +36,7 @@ def import_waypoints(request):
                     identifier=row['ident'],
                     longitude=float(row['lonx']),
                     latitude=float(row['laty']), 
-                    waypoint_id=int(row['waypoint_id']) if row.get('waypoint_id') else None
+                    waypoint_id=int(float(row['waypoint_id'])) if row.get('waypoint_id') else None
                 )
             )
             
