@@ -179,7 +179,7 @@
                         {% if "administrator" in request.user_roles or "route_staff" in request.user_roles or "developer" in request.user_roles %}
                             <li class="nav-item"><a class="nav-link" href="{% url 'routes' %}">Routes</a></li>
                         {% endif %}
-                        {% if "administrator" in request.user_roles or "developer" in request.user_roles %}
+                        {% if "administrator" in request.user_roles %}
                             <li class="nav-item dropdown">
                                 <a class="nav-link dropdown-toggle" href="#" id="navbarDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
                                     Settings

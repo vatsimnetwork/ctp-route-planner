@@ -8,6 +8,7 @@ from django.db import transaction
 import csv
 import json
 
+@is_administrator
 def waypoint_settings(request):
     waypoints_qs = Location.objects.all().order_by('identifier', 'id')
     paginator = Paginator(waypoints_qs, 100)
@@ -53,6 +54,7 @@ def delete_all_waypoints(request):
         Location.objects.all().delete()
     return redirect('waypoint_settings')
 
+@is_administrator
 def firboundaries_settings(request):
     has_local = settings.FIR_BOUNDARIES_PATH.exists()
     return render(request, 'firboundariessettings.html', {'has_local': has_local})
@@ -92,6 +94,7 @@ def delete_fir_boundaries(request):
             path.unlink()
     return redirect('firboundaries_settings')
 
+@is_administrator
 def airway_settings(request):
     return render(request, "airwaysettings.html")
 
