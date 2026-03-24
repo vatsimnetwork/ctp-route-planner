@@ -276,14 +276,15 @@ def build_plotting_caches(normalized_lines):
                 continue
             token_upper_set.add(token_upper)
 
-    # Route groups: load all matches for this request's lines in one query.
+    # Route groups and colors: load all matches for this request's lines in one query.
     route_group_by_line_upper = {}
+    route_color_by_line_upper = {}
     if line_upper_set:
         route_candidates = list(
             Route.objects
             .annotate(identifier_upper=Upper('identifier'), routestring_upper=Upper('routestring'))
             .filter(Q(identifier_upper__in=line_upper_set) | Q(routestring_upper__in=line_upper_set))
-            .only('identifier', 'routestring', 'group')
+            .only('identifier', 'routestring', 'group', 'color')
         )
         for route in route_candidates:
             identifier_key = (route.identifier or '').upper()
@@ -291,12 +292,15 @@ def build_plotting_caches(normalized_lines):
             # Keep identifier exact match as higher priority.
             if identifier_key and identifier_key not in route_group_by_line_upper:
                 route_group_by_line_upper[identifier_key] = route.group
+                route_color_by_line_upper[identifier_key] = route.color
             if routestring_key and routestring_key not in route_group_by_line_upper:
                 route_group_by_line_upper[routestring_key] = route.group
+                route_color_by_line_upper[routestring_key] = route.color
 
     if not token_upper_set:
         return {
             'route_group_by_line_upper': route_group_by_line_upper,
+            'route_color_by_line_upper': route_color_by_line_upper,
             'location_candidates_by_upper': {},
             'airway_by_upper': {},
             'airway_waypoints_by_upper': {},
@@ -335,6 +339,7 @@ def build_plotting_caches(normalized_lines):
 
     return {
         'route_group_by_line_upper': route_group_by_line_upper,
+        'route_color_by_line_upper': route_color_by_line_upper,
         'location_candidates_by_upper': location_candidates_by_upper,
         'airway_by_upper': airway_by_upper,
         'airway_waypoints_by_upper': airway_waypoints_by_upper,
@@ -354,6 +359,7 @@ def plot_route(request):
     normalized_lines = [normalize_route_text(line) for line in lines]
     caches = build_plotting_caches(normalized_lines)
     route_group_by_line_upper = caches['route_group_by_line_upper']
+    route_color_by_line_upper = caches['route_color_by_line_upper']
     location_candidates_by_upper = caches['location_candidates_by_upper']
     airway_by_upper = caches['airway_by_upper']
     airway_waypoints_by_upper = caches['airway_waypoints_by_upper']
@@ -361,6 +367,7 @@ def plot_route(request):
     result = []
     for normalized_line in normalized_lines:
         route_group = route_group_by_line_upper.get(normalized_line.upper(), '')
+        route_color = route_color_by_line_upper.get(normalized_line.upper(), '')
         route_tokens = normalized_line.split()
         
         resolved = []
@@ -430,6 +437,7 @@ def plot_route(request):
 
         result.append({
             'group': route_group,
+            'color': route_color,
             'coords': final_coords,
             'labels': final_labels,
             'unknown': [r['identifier'] for r in resolved if r['type'] == 'unknown'],

@@ -1,4 +1,5 @@
 import json
+import re
 
 from django.db import transaction
 from django.http import JsonResponse
@@ -30,6 +31,7 @@ def _create_revision_snapshot(routes_queryset):
             routestring=route.routestring,
             facilities=route.facilities,
             tags=route.tags,
+            color=route.color,
         )
         for route in routes_queryset
     ])
@@ -48,6 +50,7 @@ def _serialize_route(route):
         'routestring': route.routestring,
         'facilities': route.facilities,
         'tags': route.tags,
+        'color': route.color,
     }
 
 
@@ -57,6 +60,7 @@ def _validate_route_payload(route_data, require_original=False, require_current_
     routestring = _normalize_token_text(route_data.get('routestring'))
     facilities = _normalize_token_text(route_data.get('facilities'))
     tags = _normalize_token_text(route_data.get('tags'))
+    color = (route_data.get('color') or '').strip()
     original = route_data.get('original') or {}
 
     if require_current_values and not identifier:
@@ -69,6 +73,8 @@ def _validate_route_payload(route_data, require_original=False, require_current_
         return None, 'Commas and semicolons are not allowed in facilities.'
     if require_current_values and (',' in tags or ';' in tags):
         return None, 'Commas and semicolons are not allowed in tags.'
+    if color and not re.fullmatch(r'#[0-9a-fA-F]{6}', color):
+        return None, 'Color must be a valid hex color (e.g. #ff0000) or empty.'
 
     validated = {
         'pk': (route_data.get('pk') or '').strip(),
@@ -77,12 +83,14 @@ def _validate_route_payload(route_data, require_original=False, require_current_
         'routestring': routestring,
         'facilities': facilities,
         'tags': tags,
+        'color': color,
         'original': {
             'pk': (original.get('pk') or '').strip(),
             'group': (original.get('group') or '').strip(),
             'routestring': _normalize_token_text(original.get('routestring')),
             'facilities': _normalize_token_text(original.get('facilities')),
             'tags': _normalize_token_text(original.get('tags')),
+            'color': (original.get('color') or '').strip(),
         },
     }
 
@@ -117,6 +125,7 @@ def route_delete(request, identifier):
     original_group = (original.get('group') or '').strip()
     original_facilities = _normalize_token_text(original.get('facilities'))
     original_tags = _normalize_token_text(original.get('tags'))
+    original_color = (original.get('color') or '').strip()
 
     if not original_pk or original_pk != identifier:
         return JsonResponse({'error': 'Original route reference is missing.'}, status=400)
@@ -132,6 +141,7 @@ def route_delete(request, identifier):
         or route.group != original_group
         or route.facilities != original_facilities
         or route.tags != original_tags
+        or route.color != original_color
     ):
         return JsonResponse({'error': f"Conflict: route '{original_pk}' was changed by another user."}, status=409)
 
@@ -185,6 +195,7 @@ def routes_save(request):
             or route.group != original['group']
             or route.facilities != original['facilities']
             or route.tags != original['tags']
+            or route.color != original['color']
         ):
             return JsonResponse({'error': f"Conflict: route '{original['pk']}' was changed by another user."}, status=409)
 
@@ -206,6 +217,7 @@ def routes_save(request):
                 or route.group != original['group']
                 or route.facilities != original['facilities']
                 or route.tags != original['tags']
+                or route.color != original['color']
             ):
                 return JsonResponse({'error': f"Conflict: route '{current_identifier}' was changed by another user."}, status=409)
         else:
@@ -223,13 +235,15 @@ def routes_save(request):
                 routestring=route_data['routestring'],
                 facilities=route_data['facilities'],
                 tags=route_data['tags'],
+                color=route_data['color'],
             )
         elif new_identifier == route.identifier:
             route.group = route_data['group']
             route.routestring = route_data['routestring']
             route.facilities = route_data['facilities']
             route.tags = route_data['tags']
-            route.save(update_fields=['group', 'routestring', 'facilities', 'tags'])
+            route.color = route_data['color']
+            route.save(update_fields=['group', 'routestring', 'facilities', 'tags', 'color'])
         else:
             route.delete()
             reserved_identifiers.discard(current_identifier)
@@ -240,6 +254,7 @@ def routes_save(request):
                 routestring=route_data['routestring'],
                 facilities=route_data['facilities'],
                 tags=route_data['tags'],
+                color=route_data['color'],
             )
 
         reserved_identifiers.add(route.identifier)

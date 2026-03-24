@@ -225,38 +225,47 @@
 
     const routeLineSource = new ol.source.Vector();
     
-    // Color palette for different route groups
     const routeColorPalette = [
-        '#38bdf8',  // cyan
-        '#f87171',  // red
-        '#34d399',  // green
-        '#fbbf24',  // amber
-        '#a78bfa',  // purple
-        '#fb7185',  // rose
-        '#06b6d4',  // cyan-600
-        '#84cc16',  // lime
-        '#f59e0b',  // orange
-        '#8b5cf6',  // violet
+        '#f87171',
+        '#38bdf8',
+        '#34d399',
+        '#fbbf24',
+        '#a78bfa',
+        '#fb7185',
+        '#06b6d4',
+        '#84cc16',
+        '#f59e0b',
+        '#8b5cf6',
     ];
-    
-    // Map group names to colors
+    const fixedGroupColors = {
+        EMEA: '#8b5cf6',
+        AMAS: '#0ea5e9',
+        APAC: '#22c55e',
+        NAM: '#f59e0b',
+        LATAM: '#a855f7',
+        OCA: '#e11d48',
+    };
     const groupColorMap = new Map();
-    
+
     function getRouteColor(group) {
-        // If group is not in map yet, assign a color from palette
-        if (!groupColorMap.has(group)) {
-            const colorIndex = groupColorMap.size % routeColorPalette.length;
-            groupColorMap.set(group, routeColorPalette[colorIndex]);
+        const normalizedGroup = (group || '').trim().toUpperCase();
+        const key = normalizedGroup || '__UNGROUPED__';
+        if (fixedGroupColors[key]) {
+            return fixedGroupColors[key];
         }
-        return groupColorMap.get(group);
+        if (!groupColorMap.has(key)) {
+            const colorIndex = groupColorMap.size % routeColorPalette.length;
+            groupColorMap.set(key, routeColorPalette[colorIndex]);
+        }
+        return groupColorMap.get(key);
     }
-    
+
     const routeLineLayer = new ol.layer.Vector({
         source: routeLineSource,
         zIndex: 10,
         style: function(feature) {
-            const group = feature.get('group');
-            const color = getRouteColor(group);
+            const userColor = feature.get('userColor');
+            const color = userColor || getRouteColor(feature.get('group'));
             return [
                 new ol.style.Style({ stroke: new ol.style.Stroke({ color: 'rgba(0,0,0,0.45)', width: 4 }) }),
                 new ol.style.Style({ stroke: new ol.style.Stroke({ color: color, width: 2 }) }),
@@ -442,7 +451,8 @@
                         geometry: new ol.geom.LineString(
                             route.coords.map(c => ol.proj.fromLonLat(c))
                         ),
-                        group: route.group
+                        group: route.group,
+                        userColor: route.color || '',
                     });
                     routeLineSource.addFeature(lineFeature);
                 }

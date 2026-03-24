@@ -118,6 +118,41 @@
         display: none !important;
     }
 
+    .route-color-wrap {
+        display: flex;
+        align-items: center;
+        gap: 3px;
+    }
+    .route-color-input {
+        width: 28px;
+        height: 24px;
+        padding: 1px 2px;
+        border: 1px solid var(--surface-border, #cbd5e1);
+        border-radius: 4px;
+        cursor: pointer;
+        background: none;
+    }
+    .route-color-wrap[data-active="false"] .route-color-input {
+        opacity: 0.2;
+        border-style: dashed;
+    }
+    .route-color-clear {
+        font-size: 13px;
+        line-height: 1;
+        padding: 0 3px 1px;
+        border: 1px solid transparent;
+        background: none;
+        cursor: pointer;
+        border-radius: 3px;
+        color: var(--muted-text, #94a3b8);
+    }
+    .route-color-wrap[data-active="false"] .route-color-clear {
+        display: none;
+    }
+    .route-color-clear:hover {
+        background: var(--surface-border, #e2e8f0);
+    }
+
     .routes-page {
         height: calc(100dvh - 106px);
         max-height: calc(100dvh - 106px);
@@ -182,6 +217,7 @@
                     <tr>
                         <th style="width:210px">Identifier</th>
                         <th style="width:100px">Group</th>
+                        <th style="width:60px">Color</th>
                         <th>Route String</th>
                         <th>Facilities</th>
                         <th>Tags</th>
@@ -197,10 +233,17 @@
                         data-original-routestring="{{ route.routestring|escapejs }}"
                         data-original-facilities="{{ route.facilities|escapejs }}"
                         data-original-tags="{{ route.tags|escapejs }}"
+                        data-original-color="{{ route.color|escapejs }}"
                         data-is-new="false"
                     >
                         <td><input type="text" class="form-control form-control-sm route-identifier-input" name="identifier" value="{{ route.identifier }}"></td>
                         <td><input type="text" class="form-control form-control-sm" name="group" value="{{ route.group }}"></td>
+                        <td>
+                            <div class="route-color-wrap" data-active="{{ route.color|yesno:'true,false' }}">
+                                <input type="color" name="color" class="route-color-input" value="{{ route.color|default:'#38bdf8' }}" title="Custom route color">
+                                <button type="button" class="route-color-clear" title="Clear custom color" onclick="clearRouteColor(this)">×</button>
+                            </div>
+                        </td>
                         <td><textarea class="form-control form-control-sm route-string-input" name="routestring" rows="1">{{ route.routestring }}</textarea></td>
                         <td><input type="text" class="form-control form-control-sm" name="facilities" value="{{ route.facilities }}"></td>
                         <td><input type="text" class="form-control form-control-sm" name="tags" value="{{ route.tags }}"></td>
@@ -216,14 +259,18 @@
         <div id="map-div" class="routes-map-panel">
             <div id="map-canvas"></div>
             <div id="map-controls">
-                <div class="control-header">Layers</div>
+                <div class="control-header">Options</div>
                 <div class="form-check">
                     <input type="checkbox" id="toggle-sectors" checked>
                     <label for="toggle-sectors">FIR Boundaries</label>
                 </div>
                 <div class="form-check">
-                    <input type="checkbox" id="toggle-waypoints" >
+                    <input type="checkbox" id="toggle-waypoints">
                     <label for="toggle-waypoints">Waypoints</label>
+                </div>
+                <div class="form-check">
+                    <input type="checkbox" id="toggle-user-colors">
+                    <label for="toggle-user-colors">User Route Colors</label>
                 </div>
             </div>
         </div>
@@ -243,7 +290,7 @@ const DELETE_URL_TEMPLATE = '{% url "route_delete" "__route_id__" %}';
 const PLOT_ROUTE_URL = '{% url "plot_route" %}';
 const GET_FIRS_URL = '{% url "fir_geojson" %}';
 const GET_WAYPOINTS_BASE_URL = '{% url "waypoints_geojson" %}';
-const ROUTES_DRAFT_STORAGE_KEY = 'ctp-routes-draft-v1';
+const ROUTES_DRAFT_STORAGE_KEY = 'ctp-routes-draft-v2';
 const ROUTES_UI_STORAGE_KEY = 'ctp-routes-ui-v1';
 let routePlotRequestController = null;
 let routePlotDebounceTimer = null;
@@ -257,10 +304,17 @@ function createRowElement(rowState) {
     tr.dataset.originalRoutestring = rowState.originalRoutestring || '';
     tr.dataset.originalFacilities = rowState.originalFacilities || '';
     tr.dataset.originalTags = rowState.originalTags || '';
+    tr.dataset.originalColor = rowState.originalColor || '';
     tr.dataset.isNew = rowState.isNew ? 'true' : 'false';
     tr.innerHTML = `
         <td><input type="text" class="form-control form-control-sm route-identifier-input" name="identifier" value=""></td>
         <td><input type="text" class="form-control form-control-sm" name="group" value=""></td>
+        <td>
+            <div class="route-color-wrap" data-active="false">
+                <input type="color" name="color" class="route-color-input" value="#38bdf8" title="Custom route color">
+                <button type="button" class="route-color-clear" title="Clear custom color" onclick="clearRouteColor(this)">×</button>
+            </div>
+        </td>
         <td><textarea class="form-control form-control-sm route-string-input" name="routestring" rows="1"></textarea></td>
         <td><input type="text" class="form-control form-control-sm" name="facilities" value=""></td>
         <td><input type="text" class="form-control form-control-sm" name="tags" value=""></td>
@@ -272,7 +326,27 @@ function createRowElement(rowState) {
     tr.querySelector('[name="routestring"]').value = rowState.routestring || '';
     tr.querySelector('input[name="facilities"]').value = rowState.facilities || '';
     tr.querySelector('input[name="tags"]').value = rowState.tags || '';
+    const color = rowState.color || '';
+    if (color) {
+        const wrap = tr.querySelector('.route-color-wrap');
+        wrap.dataset.active = 'true';
+        tr.querySelector('input[name="color"]').value = color;
+    }
     return tr;
+}
+
+function getRowColor(row) {
+    const wrap = row.querySelector('.route-color-wrap');
+    if (!wrap || wrap.dataset.active !== 'true') return '';
+    return row.querySelector('input[name="color"]')?.value || '';
+}
+
+function clearRouteColor(btn) {
+    const wrap = btn.closest('.route-color-wrap');
+    if (wrap) wrap.dataset.active = 'false';
+    ensureTrailingEmptyRow();
+    saveRoutesDraftToStorage();
+    scheduleVisibleRoutesPlot();
 }
 
 function isRowCompletelyEmpty(row) {
@@ -322,9 +396,11 @@ function collectRouteRowsState() {
         originalRoutestring: row.dataset.originalRoutestring || '',
         originalFacilities: row.dataset.originalFacilities || '',
         originalTags: row.dataset.originalTags || '',
+        originalColor: row.dataset.originalColor || '',
         isNew: row.dataset.isNew === 'true',
         identifier: row.querySelector('input[name="identifier"]').value || '',
         group: row.querySelector('input[name="group"]').value || '',
+        color: getRowColor(row),
         routestring: row.querySelector('[name="routestring"]').value || '',
         facilities: row.querySelector('input[name="facilities"]').value || '',
         tags: row.querySelector('input[name="tags"]').value || '',
@@ -480,11 +556,15 @@ function renderPlotWarnings(tokens) {
     container.style.display = 'block';
 }
 
-function collectVisibleRouteStrings() {
+function collectVisibleRoutes() {
     const rows = Array.from(document.querySelectorAll('#routes-tbody tr'));
     return rows
         .filter(row => row.style.display !== 'none')
-        .map(row => normalizeTokenField((row.querySelector('[name="routestring"]')?.value || '')))
+        .map(row => {
+            const routestring = normalizeTokenField((row.querySelector('[name="routestring"]')?.value || ''));
+            const color = getRowColor(row);
+            return routestring ? { routestring, color } : null;
+        })
         .filter(Boolean);
 }
 
@@ -496,7 +576,7 @@ function plotVisibleRoutesOnMap() {
         return;
     }
 
-    const visibleRoutes = collectVisibleRouteStrings();
+    const visibleRoutes = collectVisibleRoutes();
     clearRoutePlot();
 
     if (!visibleRoutes.length) {
@@ -515,17 +595,18 @@ function plotVisibleRoutesOnMap() {
             'Content-Type': 'application/json',
             'X-CSRFToken': CSRF_TOKEN,
         },
-        body: JSON.stringify({ route: visibleRoutes.join('\n') }),
+        body: JSON.stringify({ route: visibleRoutes.map(r => r.routestring).join('\n') }),
         signal: routePlotRequestController.signal,
     })
     .then(r => r.json())
     .then(data => {
         const unknownTokens = new Set();
-        (data.routes || []).forEach(route => {
+        (data.routes || []).forEach((route, i) => {
             if (route.coords && route.coords.length > 1) {
                 const lineFeature = new ol.Feature({
                     geometry: new ol.geom.LineString(route.coords.map(c => ol.proj.fromLonLat(c))),
                     group: (route.group || '').trim().toUpperCase(),
+                    userColor: visibleRoutes[i]?.color || '',
                 });
                 routeLineSource.addFeature(lineFeature);
             }
@@ -747,6 +828,7 @@ function scheduleVisibleRoutesPlot() {
         APAC: '#22c55e',
         NAM: '#f59e0b',
         LATAM: '#a855f7',
+        OCA: '#e11d48',
     };
     const groupColorMap = new Map();
 
@@ -767,7 +849,9 @@ function scheduleVisibleRoutesPlot() {
         source: routeLineSource,
         zIndex: 10,
         style: function(feature) {
-            const color = getRouteColor(feature.get('group'));
+            const useUserColors = document.getElementById('toggle-user-colors')?.checked;
+            const userColor = feature.get('userColor');
+            const color = (useUserColors && userColor) ? userColor : getRouteColor(feature.get('group'));
             return [
                 new ol.style.Style({ stroke: new ol.style.Stroke({ color: 'rgba(0,0,0,0.45)', width: 4 }) }),
                 new ol.style.Style({ stroke: new ol.style.Stroke({ color: color, width: 2 }) }),
@@ -791,6 +875,10 @@ function scheduleVisibleRoutesPlot() {
 
     document.getElementById('toggle-waypoints').addEventListener('change', function() {
         loadVisibleWaypoints();
+    });
+
+    document.getElementById('toggle-user-colors').addEventListener('change', function() {
+        routeLineLayer.changed();
     });
 
     function addWaypoint(lon, lat, name) {
@@ -882,6 +970,7 @@ async function deleteRow(btn) {
                     routestring: row.dataset.originalRoutestring,
                     facilities: row.dataset.originalFacilities,
                     tags: row.dataset.originalTags,
+                    color: row.dataset.originalColor || '',
                 },
             }),
         });
@@ -908,6 +997,7 @@ function isRowChanged(row) {
     const routestring = normalizeTokenField(row.querySelector('[name="routestring"]').value);
     const facilities = normalizeTokenField(row.querySelector('input[name="facilities"]').value);
     const tags = normalizeTokenField(row.querySelector('input[name="tags"]').value);
+    const color = getRowColor(row);
     if (row.dataset.isNew === 'true') {
         return Boolean(identifier) || Boolean(group) || Boolean(routestring) || Boolean(facilities) || Boolean(tags);
     }
@@ -915,7 +1005,8 @@ function isRowChanged(row) {
         || group !== row.dataset.originalGroup
         || routestring !== normalizeTokenField(row.dataset.originalRoutestring)
         || facilities !== normalizeTokenField(row.dataset.originalFacilities)
-        || tags !== normalizeTokenField(row.dataset.originalTags);
+        || tags !== normalizeTokenField(row.dataset.originalTags)
+        || color !== (row.dataset.originalColor || '');
 }
 
 function showAlert(message, type) {
@@ -944,6 +1035,7 @@ function saveAll() {
         const tagsInput = row.querySelector('input[name="tags"]');
         const tags = normalizeTokenField(tagsInput.value);
         tagsInput.value = tags;
+        const color = getRowColor(row);
         if (isRowChanged(row)) {
             updates.push({
                 pk,
@@ -952,12 +1044,14 @@ function saveAll() {
                 routestring,
                 facilities,
                 tags,
+                color,
                 original: {
                     pk: row.dataset.originalPk,
                     group: row.dataset.originalGroup,
                     routestring: row.dataset.originalRoutestring,
                     facilities: row.dataset.originalFacilities,
                     tags: row.dataset.originalTags,
+                    color: row.dataset.originalColor || '',
                 },
             });
         }
@@ -1003,6 +1097,10 @@ document.getElementById('routes-tbody').addEventListener('input', event => {
         const cur = event.target.selectionStart;
         event.target.value = event.target.value.toUpperCase();
         event.target.setSelectionRange(cur, cur);
+    }
+    if (event.target.name === 'color') {
+        const wrap = event.target.closest('.route-color-wrap');
+        if (wrap) wrap.dataset.active = 'true';
     }
     ensureTrailingEmptyRow();
     saveRoutesDraftToStorage();

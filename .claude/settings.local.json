@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find C:UsersmattiDesktopctp-route-planner -type f \\\\\\(-name *.js -o -name *.css \\\\\\))"
+    ]
+  }
+}
