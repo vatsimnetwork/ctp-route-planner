@@ -387,35 +387,36 @@ function ensureTrailingEmptyRow() {
     }
 }
 
-function collectRouteRowsState() {
-    const rows = Array.from(document.querySelectorAll('#routes-tbody tr'));
-    return rows.map(row => ({
-        pk: row.dataset.pk || '',
-        originalPk: row.dataset.originalPk || '',
-        originalGroup: row.dataset.originalGroup || '',
-        originalRoutestring: row.dataset.originalRoutestring || '',
-        originalFacilities: row.dataset.originalFacilities || '',
-        originalTags: row.dataset.originalTags || '',
-        originalColor: row.dataset.originalColor || '',
-        isNew: row.dataset.isNew === 'true',
-        identifier: row.querySelector('input[name="identifier"]').value || '',
-        group: row.querySelector('input[name="group"]').value || '',
-        color: getRowColor(row),
-        routestring: row.querySelector('[name="routestring"]').value || '',
-        facilities: row.querySelector('input[name="facilities"]').value || '',
-        tags: row.querySelector('input[name="tags"]').value || '',
-    }));
-}
 
 function saveRoutesDraftToStorage() {
     if (isApplyingStoredDraft) {
         return;
     }
-    const payload = {
-        rows: collectRouteRowsState(),
-        filterSearch: document.getElementById('filter-search').value || '',
-    };
-    localStorage.setItem(ROUTES_DRAFT_STORAGE_KEY, JSON.stringify(payload));
+    const rows = Array.from(document.querySelectorAll('#routes-tbody tr'));
+    const changedRows = rows
+        .filter(row => isRowChanged(row))
+        .map(row => ({
+            pk: row.dataset.pk || '',
+            originalPk: row.dataset.originalPk || '',
+            originalGroup: row.dataset.originalGroup || '',
+            originalRoutestring: row.dataset.originalRoutestring || '',
+            originalFacilities: row.dataset.originalFacilities || '',
+            originalTags: row.dataset.originalTags || '',
+            originalColor: row.dataset.originalColor || '',
+            isNew: row.dataset.isNew === 'true',
+            identifier: row.querySelector('input[name="identifier"]').value || '',
+            group: row.querySelector('input[name="group"]').value || '',
+            color: getRowColor(row),
+            routestring: row.querySelector('[name="routestring"]').value || '',
+            facilities: row.querySelector('input[name="facilities"]').value || '',
+            tags: row.querySelector('input[name="tags"]').value || '',
+        }));
+    const filterSearch = document.getElementById('filter-search').value || '';
+    if (!changedRows.length && !filterSearch) {
+        localStorage.removeItem(ROUTES_DRAFT_STORAGE_KEY);
+        return;
+    }
+    localStorage.setItem(ROUTES_DRAFT_STORAGE_KEY, JSON.stringify({ changedRows, filterSearch }));
 }
 
 function saveUiStateToSessionStorage() {
@@ -465,15 +466,38 @@ function restoreRoutesDraftFromStorage() {
     try {
         stored = JSON.parse(raw);
     } catch {
+        localStorage.removeItem(ROUTES_DRAFT_STORAGE_KEY);
+        return false;
+    }
+
+    const changedRows = stored.changedRows;
+    if (!Array.isArray(changedRows) || (!changedRows.length && !stored.filterSearch)) {
+        localStorage.removeItem(ROUTES_DRAFT_STORAGE_KEY);
         return false;
     }
 
     isApplyingStoredDraft = true;
     try {
-        if (Array.isArray(stored.rows)) {
-            const tbody = document.getElementById('routes-tbody');
-            tbody.innerHTML = '';
-            stored.rows.forEach(rowState => tbody.appendChild(createRowElement(rowState)));
+        const tbody = document.getElementById('routes-tbody');
+
+        for (const rowState of changedRows) {
+            if (rowState.isNew) {
+                tbody.appendChild(createRowElement(rowState));
+            } else {
+                // Merge edits into the server-rendered row, if it still exists.
+                const existingRow = tbody.querySelector(`tr[data-original-pk="${CSS.escape(rowState.originalPk)}"]`);
+                if (!existingRow) continue;
+                existingRow.querySelector('input[name="identifier"]').value = rowState.identifier || '';
+                existingRow.querySelector('input[name="group"]').value = rowState.group || '';
+                existingRow.querySelector('[name="routestring"]').value = rowState.routestring || '';
+                existingRow.querySelector('input[name="facilities"]').value = rowState.facilities || '';
+                existingRow.querySelector('input[name="tags"]').value = rowState.tags || '';
+                const wrap = existingRow.querySelector('.route-color-wrap');
+                if (wrap) {
+                    wrap.dataset.active = rowState.color ? 'true' : 'false';
+                    if (rowState.color) existingRow.querySelector('input[name="color"]').value = rowState.color;
+                }
+            }
         }
 
         if (typeof stored.filterSearch === 'string') {
