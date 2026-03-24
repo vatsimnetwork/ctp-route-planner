@@ -4,6 +4,8 @@ import requests
 from django.shortcuts import render
 from django.http import JsonResponse
 from django.conf import settings
+from django.db.models import Q
+from django.db.models.functions import Upper
 from routeplanner.models import Location, Airway, AirwayWaypoint, Route
 
 DIRECT_ROUTE_TOKENS = {'DCT', 'DIRECT'}
@@ -121,18 +123,33 @@ def get_waypoint(waypoint_string: str, before_waypoint: Location):
     except Location.DoesNotExist:
         return None
     
-def get_airway_coordinates(airway_identifier: str, entry_waypoint: Location, exit_waypoint: Location):
-    try:
-        airway = Airway.objects.get(identifier__iexact=airway_identifier)
-        waypoints = airway.get_ordered_waypoints()
-        entry_index = next(i for i, wp in enumerate(waypoints) if wp.identifier == entry_waypoint.identifier)
-        exit_index = next(i for i, wp in enumerate(waypoints) if wp.identifier == exit_waypoint.identifier)
-        if entry_index < exit_index:
-            return [[wp.longitude, wp.latitude] for wp in waypoints[entry_index:exit_index + 1]]
-        else:
-            return [[wp.longitude, wp.latitude] for wp in reversed(waypoints[exit_index:entry_index + 1])]
-    except (Airway.DoesNotExist, StopIteration):
+def get_airway_coordinates(
+    airway_identifier: str,
+    entry_waypoint: Location,
+    exit_waypoint: Location,
+    airway_waypoints_by_upper: dict,
+):
+    waypoints = airway_waypoints_by_upper.get((airway_identifier or '').upper(), [])
+    if not waypoints:
         return None
+
+    entry_indices = [i for i, wp in enumerate(waypoints) if wp.id == entry_waypoint.id]
+    exit_indices = [i for i, wp in enumerate(waypoints) if wp.id == exit_waypoint.id]
+    if not entry_indices or not exit_indices:
+        return None
+
+    # If a waypoint appears multiple times in an airway, choose the closest pair
+    # to avoid selecting an unrelated branch occurrence.
+    entry_index, exit_index = min(
+        ((ei, xi) for ei in entry_indices for xi in exit_indices),
+        key=lambda pair: abs(pair[0] - pair[1]),
+    )
+
+    if entry_index < exit_index:
+        segment = waypoints[entry_index:exit_index + 1]
+    else:
+        segment = reversed(waypoints[exit_index:entry_index + 1])
+    return [[wp.longitude, wp.latitude] for wp in segment]
 
 
 def calculate_distance_squared(wp: Location, ref_wp: Location) -> float:
@@ -140,23 +157,33 @@ def calculate_distance_squared(wp: Location, ref_wp: Location) -> float:
     return (wp.latitude - ref_wp.latitude) ** 2 + (wp.longitude - ref_wp.longitude) ** 2
 
 
-def resolve_token(token_upper: str, prev_location: Location = None):
+def resolve_token(
+    token_upper: str,
+    prev_location: Location = None,
+    location_candidates_by_upper: dict = None,
+    airway_by_upper: dict = None,
+    airway_waypoints_by_upper: dict = None,
+):
     """
     Resolve a token to either a waypoint or airway.
     If both exist with the same name, return the one that's closer.
     
     Returns: dict with 'type', and either 'waypoint' or 'airway' data
     """
-    # First try to get waypoint(s)
-    waypoints = Location.objects.filter(identifier__iexact=token_upper)
-    airway = Airway.objects.filter(identifier__iexact=token_upper).first()
+    location_candidates_by_upper = location_candidates_by_upper or {}
+    airway_by_upper = airway_by_upper or {}
+    airway_waypoints_by_upper = airway_waypoints_by_upper or {}
+
+    # Resolve from preloaded caches (no per-token DB query).
+    waypoints = location_candidates_by_upper.get(token_upper, [])
+    airway = airway_by_upper.get(token_upper)
     
     # No waypoint or airway found
-    if not waypoints.exists() and not airway:
+    if not waypoints and not airway:
         return None
     
     # Only waypoint exists
-    if waypoints.exists() and not airway:
+    if waypoints and not airway:
         if len(waypoints) == 1:
             wp = waypoints[0]
         else:
@@ -174,7 +201,7 @@ def resolve_token(token_upper: str, prev_location: Location = None):
         }
     
     # Only airway exists
-    if not waypoints.exists() and airway:
+    if not waypoints and airway:
         return {
             'type': 'airway',
             'airway': airway,
@@ -193,7 +220,8 @@ def resolve_token(token_upper: str, prev_location: Location = None):
         waypoint_distance = calculate_distance_squared(closest_waypoint, prev_location)
         
         # Get first waypoint of airway as entry point
-        airway_first_wp = airway.get_ordered_waypoints().first()
+        airway_points = airway_waypoints_by_upper.get(token_upper, [])
+        airway_first_wp = airway_points[0] if airway_points else None
         if airway_first_wp:
             airway_distance = calculate_distance_squared(airway_first_wp, prev_location)
         else:
@@ -216,8 +244,8 @@ def resolve_token(token_upper: str, prev_location: Location = None):
             }
     else:
         # No previous location to compare - prefer waypoint
-        if waypoints.exists():
-            wp = waypoints.first()
+        if waypoints:
+            wp = waypoints[0]
             return {
                 'type': 'waypoint',
                 'waypoint': wp,
@@ -225,12 +253,92 @@ def resolve_token(token_upper: str, prev_location: Location = None):
                 'lon': wp.longitude,
                 'lat': wp.latitude
             }
-        else:
-            return {
-                'type': 'airway',
-                'airway': airway,
-                'identifier': airway.identifier
-            }
+        return {
+            'type': 'airway',
+            'airway': airway,
+            'identifier': airway.identifier
+        }
+
+
+def build_plotting_caches(normalized_lines):
+    token_upper_set = set()
+    line_upper_set = set()
+
+    for normalized_line in normalized_lines:
+        if not normalized_line:
+            continue
+        line_upper_set.add(normalized_line.upper())
+        for token in normalized_line.split():
+            token_upper = token.strip().upper()
+            if not token_upper or token_upper in DIRECT_ROUTE_TOKENS:
+                continue
+            if check_for_oceanic_waypoint(token_upper):
+                continue
+            token_upper_set.add(token_upper)
+
+    # Route groups: load all matches for this request's lines in one query.
+    route_group_by_line_upper = {}
+    if line_upper_set:
+        route_candidates = list(
+            Route.objects
+            .annotate(identifier_upper=Upper('identifier'), routestring_upper=Upper('routestring'))
+            .filter(Q(identifier_upper__in=line_upper_set) | Q(routestring_upper__in=line_upper_set))
+            .only('identifier', 'routestring', 'group')
+        )
+        for route in route_candidates:
+            identifier_key = (route.identifier or '').upper()
+            routestring_key = normalize_route_text(route.routestring).upper()
+            # Keep identifier exact match as higher priority.
+            if identifier_key and identifier_key not in route_group_by_line_upper:
+                route_group_by_line_upper[identifier_key] = route.group
+            if routestring_key and routestring_key not in route_group_by_line_upper:
+                route_group_by_line_upper[routestring_key] = route.group
+
+    if not token_upper_set:
+        return {
+            'route_group_by_line_upper': route_group_by_line_upper,
+            'location_candidates_by_upper': {},
+            'airway_by_upper': {},
+            'airway_waypoints_by_upper': {},
+        }
+
+    locations = list(
+        Location.objects
+        .annotate(identifier_upper=Upper('identifier'))
+        .filter(identifier_upper__in=token_upper_set)
+        .only('id', 'identifier', 'latitude', 'longitude')
+    )
+    location_candidates_by_upper = {}
+    for location in locations:
+        key = location.identifier.upper()
+        location_candidates_by_upper.setdefault(key, []).append(location)
+
+    airways = list(
+        Airway.objects
+        .annotate(identifier_upper=Upper('identifier'))
+        .filter(identifier_upper__in=token_upper_set)
+        .only('identifier')
+    )
+    airway_by_upper = {airway.identifier.upper(): airway for airway in airways}
+
+    airway_waypoints_by_upper = {key: [] for key in airway_by_upper.keys()}
+    if airway_by_upper:
+        airway_waypoint_rows = (
+            AirwayWaypoint.objects
+            .filter(airway_id__in=[airway.identifier for airway in airways])
+            .select_related('airway', 'waypoint')
+            .order_by('airway_id', 'order')
+        )
+        for row in airway_waypoint_rows:
+            airway_key = row.airway_id.upper()
+            airway_waypoints_by_upper.setdefault(airway_key, []).append(row.waypoint)
+
+    return {
+        'route_group_by_line_upper': route_group_by_line_upper,
+        'location_candidates_by_upper': location_candidates_by_upper,
+        'airway_by_upper': airway_by_upper,
+        'airway_waypoints_by_upper': airway_waypoints_by_upper,
+    }
 
 
 def plot_route(request):
@@ -243,14 +351,16 @@ def plot_route(request):
 
     route_text = data.get('route', '')
     lines = [l.strip() for l in route_text.split('\n') if l.strip()]
+    normalized_lines = [normalize_route_text(line) for line in lines]
+    caches = build_plotting_caches(normalized_lines)
+    route_group_by_line_upper = caches['route_group_by_line_upper']
+    location_candidates_by_upper = caches['location_candidates_by_upper']
+    airway_by_upper = caches['airway_by_upper']
+    airway_waypoints_by_upper = caches['airway_waypoints_by_upper']
 
     result = []
-    for line in lines:
-        normalized_line = normalize_route_text(line)
-        route_obj = Route.objects.filter(identifier__iexact=normalized_line).first()
-        if route_obj is None:
-            route_obj = Route.objects.filter(routestring__iexact=normalized_line).first()
-        route_group = route_obj.group if route_obj else ''
+    for normalized_line in normalized_lines:
+        route_group = route_group_by_line_upper.get(normalized_line.upper(), '')
         route_tokens = normalized_line.split()
         
         resolved = []
@@ -271,8 +381,13 @@ def plot_route(request):
                 prev_location = None
                 continue
 
-            # Use the new resolve_token function that handles both waypoints and airways
-            resolved_item = resolve_token(token_upper, prev_location)
+            resolved_item = resolve_token(
+                token_upper,
+                prev_location,
+                location_candidates_by_upper=location_candidates_by_upper,
+                airway_by_upper=airway_by_upper,
+                airway_waypoints_by_upper=airway_waypoints_by_upper,
+            )
             if resolved_item:
                 if resolved_item['type'] == 'waypoint':
                     resolved.append({
@@ -294,7 +409,6 @@ def plot_route(request):
 
         final_coords = []
         final_labels = []
-        unresolved_tokens = []
         for i, item in enumerate(resolved):
             if item['type'] == 'waypoint':
                 final_coords.append([item['lon'], item['lat']])
@@ -303,19 +417,22 @@ def plot_route(request):
                 prev_item = next((r for r in reversed(resolved[:i]) if r['type'] == 'waypoint' and r.get('location')), None)
                 next_item = next((r for r in resolved[i + 1:] if r['type'] == 'waypoint' and r.get('location')), None)
                 if prev_item and next_item:
-                    airway_coords = get_airway_coordinates(item['identifier'], prev_item['location'], next_item['location'])
+                    airway_coords = get_airway_coordinates(
+                        item['identifier'],
+                        prev_item['location'],
+                        next_item['location'],
+                        airway_waypoints_by_upper,
+                    )
                     if airway_coords:
                         final_coords.extend(airway_coords[1:-1])
-                    else:
-                        unresolved_tokens.append(item['identifier'])
-                else:
-                    unresolved_tokens.append(item['identifier'])
+                # If airway exists but cannot be resolved between surrounding waypoints,
+                # keep plotting as direct leg and do not classify it as unknown token.
 
         result.append({
             'group': route_group,
             'coords': final_coords,
             'labels': final_labels,
-            'unknown': [r['identifier'] for r in resolved if r['type'] == 'unknown'] + unresolved_tokens,
+            'unknown': [r['identifier'] for r in resolved if r['type'] == 'unknown'],
         })
 
     return JsonResponse({'routes': result})

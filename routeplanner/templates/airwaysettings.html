@@ -10,6 +10,7 @@
             <button type="submit" class="btn btn-primary btn-sm">Import CSV</button>
         </form>
     </div>
+    <p>Airway count: {{ airway_count }}</p>
     
 
     <form action="{% url 'delete_all_airways' %}" method="post"  class="d-flex gap-2">

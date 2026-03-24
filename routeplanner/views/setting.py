@@ -96,7 +96,8 @@ def delete_fir_boundaries(request):
 
 @is_administrator
 def airway_settings(request):
-    return render(request, "airwaysettings.html")
+    airway_count = Airway.objects.count()
+    return render(request, "airwaysettings.html", {"airway_count": airway_count})
 
 @is_administrator
 def import_airway_segments(request):
@@ -106,15 +107,60 @@ def import_airway_segments(request):
         decoded_file = csv_file.read().decode('utf-8').splitlines()
         reader = csv.DictReader(decoded_file)
 
+        # Cache für Waypoints: waypoint_id -> Location
         loc_cache = {l.waypoint_id: l for l in Location.objects.filter(waypoint_id__isnull=False)}
         
         last_points = {}
+        waypoints_to_create = []
+        created_waypoints = {}  # waypoint_id -> Location
 
         try:
             with transaction.atomic():
+                # Erster Pass: Alle rows einlesen, fehlende Waypoints sammeln
+                rows_list = list(reader)
+                
+                for row in rows_list:
+                    from_id = int(row['from_waypoint_id'])
+                    to_id = int(row['to_waypoint_id'])
+                    
+                    # Falls Waypoint nicht im Cache und noch nicht zum Erstellen vorgemerkt
+                    if from_id not in loc_cache and from_id not in created_waypoints:
+                        waypoints_to_create.append((
+                            from_id,
+                            row['from_lon'],
+                            row['from_lat']
+                        ))
+                    
+                    if to_id not in loc_cache and to_id not in created_waypoints:
+                        waypoints_to_create.append((
+                            to_id,
+                            row['to_lon'],
+                            row['to_lat']
+                        ))
+                
+                # Duplikate entfernen beim Erstellen
+                unique_waypoints = {}
+                for wp_id, lon, lat in waypoints_to_create:
+                    if wp_id not in unique_waypoints:
+                        unique_waypoints[wp_id] = (lon, lat)
+                
+                # Batch-create fehlende Waypoints
+                batch_create = [
+                    Location(
+                        waypoint_id=wp_id,
+                        longitude=float(lon),
+                        latitude=float(lat)
+                    )
+                    for wp_id, (lon, lat) in unique_waypoints.items()
+                ]
+                
+                if batch_create:
+                    created = Location.objects.bulk_create(batch_create, ignore_conflicts=True)
+                    for loc in created:
+                        created_waypoints[loc.waypoint_id] = loc
 
-
-                for row in reader:
+                # Zweiter Pass: Airways importieren
+                for row in rows_list:
                     aw_name = row['airway_name']
                     seq = int(row['sequence_no'])
                     from_id = int(row['from_waypoint_id'])
@@ -122,7 +168,8 @@ def import_airway_segments(request):
 
                     airway, _ = Airway.objects.get_or_create(identifier=aw_name)
 
-                    start_node = loc_cache.get(from_id)
+                    # Waypoint aus Cache oder gerade erstellt
+                    start_node = loc_cache.get(from_id) or created_waypoints.get(from_id)
 
                     if start_node:
                         AirwayWaypoint.objects.update_or_create(
@@ -136,8 +183,9 @@ def import_airway_segments(request):
                         'final_order': seq + 1
                     }
 
+                # Finale Punkte hinzufügen
                 for aw_name, data in last_points.items():
-                    end_node = loc_cache.get(data['waypoint_id'])
+                    end_node = loc_cache.get(data['waypoint_id']) or created_waypoints.get(data['waypoint_id'])
                     if end_node:
                         airway = Airway.objects.get(identifier=aw_name)
                         AirwayWaypoint.objects.update_or_create(
@@ -147,7 +195,7 @@ def import_airway_segments(request):
                         )
 
         except Exception as e:
-            print(e)
+            print(f"Fehler beim Import: {e}")
 
             
     return redirect('airways_settings')
