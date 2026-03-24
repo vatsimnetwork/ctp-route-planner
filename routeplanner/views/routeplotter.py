@@ -1,4 +1,5 @@
 import json
+import re
 import requests
 from django.shortcuts import render
 from django.http import JsonResponse
@@ -48,12 +49,58 @@ def waypoints_geojson(request):
     return JsonResponse({"type": "FeatureCollection", "features": features})
 
 def check_for_oceanic_waypoint(waypoint: str):
-    try:
-        lat = float(waypoint.split("N")[0])
-        lon= -float(waypoint.split("N")[1].split("W")[0])
-        return lat,lon
-    except:
+    token = (waypoint or '').strip().upper()
+    if not token:
         return False
+
+    m = re.fullmatch(r'(\d{1,2}(?:\.\d{1,2})?)([NS])(\d{1,3}(?:\.\d{1,2})?)([EW])', token)
+    if m:
+        lat = float(m.group(1))
+        lon = float(m.group(3))
+        if m.group(2) == 'S':
+            lat = -lat
+        if m.group(4) == 'W':
+            lon = -lon
+        return lat, lon
+
+   
+    m = re.fullmatch(r'(\d{2})(\d{2})([NSEW])', token)
+    if m:
+        lat_mag = float(m.group(1))
+        lon_mag = float(m.group(2))
+        quadrant = m.group(3)
+
+        if quadrant == 'N':
+            return lat_mag, -lon_mag
+        if quadrant == 'E':
+            return lat_mag, lon_mag
+        if quadrant == 'S':
+            return -lat_mag, lon_mag
+        return -lat_mag, -lon_mag  
+
+    m = re.fullmatch(r'(\d{2})([NS])(\d{2})', token)
+    if m:
+        lat_mag = float(m.group(1))
+        lon_mag = 100.0 + float(m.group(3))
+        lat = lat_mag if m.group(2) == 'N' else -lat_mag
+        lon = -lon_mag if m.group(2) == 'N' else lon_mag
+        return lat, lon
+
+    m = re.fullmatch(r'(\d{2})([EW])(\d{2})', token)
+    if m:
+        lat_mag = float(m.group(1))
+        lon_mag = 100.0 + float(m.group(3))
+        if m.group(2) == 'E':
+            return lat_mag, lon_mag
+        return -lat_mag, -lon_mag
+
+    m = re.fullmatch(r'H(\d{2})(\d{2})', token)
+    if m:
+        lat = float(m.group(1)) + 0.5
+        lon = -float(m.group(2))
+        return lat, lon
+
+    return False
 
 
 def normalize_route_text(value: str) -> str:
