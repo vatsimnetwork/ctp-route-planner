@@ -150,10 +150,10 @@ def import_airway_segments(request):
             print(e)
 
             
-    return redirect('airway_settings')
+    return redirect('airways_settings')
 
 @is_administrator
 def delete_all_airways(request):
     if request.method == 'POST':
         Airway.objects.all().delete()
-    return redirect('waypoint_settings')
+    return redirect('airways_settings')
