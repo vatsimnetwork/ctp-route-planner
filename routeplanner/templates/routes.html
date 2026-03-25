@@ -153,6 +153,22 @@
         background: var(--surface-border, #e2e8f0);
     }
 
+    .route-enabled-cell {
+        text-align: center;
+        vertical-align: middle;
+    }
+
+    .routes-section-header {
+        background: #e5edf6;
+        color: #0f172a;
+        font-weight: 600;
+    }
+
+    html[data-theme='dark'] .routes-section-header {
+        background: #172133;
+        color: #e2e8f0;
+    }
+
     .routes-page {
         height: calc(100dvh - 106px);
         max-height: calc(100dvh - 106px);
@@ -191,7 +207,7 @@
         <h1 class="mb-0">Routes</h1>
         <div class="revision-badge">Revision set <strong id="current-revision-number">{{ current_revision_number }}</strong></div>
     </div>
-    <p class="routes-help-text mb-3">Identifiers are editable for every route and must remain unique. Group, facilities, and tags are free-text fields. Route, facilities, and tags use the same space-separated syntax.</p>
+    <p class="routes-help-text mb-3">Identifiers are editable for every route and must remain unique. Group, facilities, and tags are free-text fields. Route, facilities, and tags use the same space-separated syntax. Disable routes to move them into the lower disabled section without removing them from search/filter results.</p>
 
     <div id="alert-container"></div>
     <div id="plot-warning-container" class="alert alert-warning py-2 mb-3" style="display:none;"></div>
@@ -218,15 +234,21 @@
                         <th style="width:210px">Identifier</th>
                         <th style="width:100px">Group</th>
                         <th style="width:60px">Color</th>
+                        <th style="width:90px">Enabled</th>
                         <th>Route String</th>
                         <th>Facilities</th>
                         <th>Tags</th>
                         <th style="width:90px">Actions</th>
                     </tr>
                 </thead>
-                <tbody id="routes-tbody">
+                <tbody id="routes-enabled-tbody">
+                    <tr id="enabled-routes-header" class="routes-section-header">
+                        <td colspan="8">Enabled Routes</td>
+                    </tr>
                     {% for route in routes %}
+                    {% if route.enabled %}
                     <tr
+                        class="route-row"
                         data-pk="{{ route.identifier }}"
                         data-original-pk="{{ route.identifier }}"
                         data-original-group="{{ route.group|escapejs }}"
@@ -234,6 +256,7 @@
                         data-original-facilities="{{ route.facilities|escapejs }}"
                         data-original-tags="{{ route.tags|escapejs }}"
                         data-original-color="{{ route.color|escapejs }}"
+                        data-original-enabled="{{ route.enabled|yesno:'true,false' }}"
                         data-is-new="false"
                     >
                         <td><input type="text" class="form-control form-control-sm route-identifier-input" name="identifier" value="{{ route.identifier }}"></td>
@@ -244,6 +267,9 @@
                                 <button type="button" class="route-color-clear" title="Clear custom color" onclick="clearRouteColor(this)">×</button>
                             </div>
                         </td>
+                        <td class="route-enabled-cell">
+                            <input type="checkbox" name="enabled" {{ route.enabled|yesno:'checked,' }}>
+                        </td>
                         <td><textarea class="form-control form-control-sm route-string-input" name="routestring" rows="1">{{ route.routestring }}</textarea></td>
                         <td><input type="text" class="form-control form-control-sm" name="facilities" value="{{ route.facilities }}"></td>
                         <td><input type="text" class="form-control form-control-sm" name="tags" value="{{ route.tags }}"></td>
@@ -251,6 +277,46 @@
                             <button type="button" class="btn btn-danger btn-sm" onclick="deleteRow(this)">Delete</button>
                         </td>
                     </tr>
+                    {% endif %}
+                    {% endfor %}
+                </tbody>
+                <tbody id="routes-disabled-tbody">
+                    <tr id="disabled-routes-header" class="routes-section-header">
+                        <td colspan="8">Disabled Routes</td>
+                    </tr>
+                    {% for route in routes %}
+                    {% if not route.enabled %}
+                    <tr
+                        class="route-row"
+                        data-pk="{{ route.identifier }}"
+                        data-original-pk="{{ route.identifier }}"
+                        data-original-group="{{ route.group|escapejs }}"
+                        data-original-routestring="{{ route.routestring|escapejs }}"
+                        data-original-facilities="{{ route.facilities|escapejs }}"
+                        data-original-tags="{{ route.tags|escapejs }}"
+                        data-original-color="{{ route.color|escapejs }}"
+                        data-original-enabled="{{ route.enabled|yesno:'true,false' }}"
+                        data-is-new="false"
+                    >
+                        <td><input type="text" class="form-control form-control-sm route-identifier-input" name="identifier" value="{{ route.identifier }}"></td>
+                        <td><input type="text" class="form-control form-control-sm" name="group" value="{{ route.group }}"></td>
+                        <td>
+                            <div class="route-color-wrap" data-active="{{ route.color|yesno:'true,false' }}">
+                                <input type="color" name="color" class="route-color-input" value="{{ route.color|default:'#38bdf8' }}" title="Custom route color">
+                                <button type="button" class="route-color-clear" title="Clear custom color" onclick="clearRouteColor(this)">×</button>
+                            </div>
+                        </td>
+                        <td class="route-enabled-cell">
+                            <input type="checkbox" name="enabled" {{ route.enabled|yesno:'checked,' }}>
+                        </td>
+                        <td><textarea class="form-control form-control-sm route-string-input" name="routestring" rows="1">{{ route.routestring }}</textarea></td>
+                        <td><input type="text" class="form-control form-control-sm" name="facilities" value="{{ route.facilities }}"></td>
+                        <td><input type="text" class="form-control form-control-sm" name="tags" value="{{ route.tags }}"></td>
+                        <td>
+                            <button type="button" class="btn btn-danger btn-sm" onclick="deleteRow(this)">Delete</button>
+                        </td>
+                    </tr>
+                    {% endif %}
                     {% endfor %}
                 </tbody>
             </table>
@@ -296,8 +362,42 @@ let routePlotRequestController = null;
 let routePlotDebounceTimer = null;
 let isApplyingStoredDraft = false;
 
+function getRouteRows() {
+    return Array.from(document.querySelectorAll('tr.route-row'));
+}
+
+function isRouteEnabled(row) {
+    const enabledInput = row.querySelector('input[name="enabled"]');
+    return enabledInput ? enabledInput.checked : true;
+}
+
+function moveRowToSection(row) {
+    const targetBodyId = isRouteEnabled(row) ? 'routes-enabled-tbody' : 'routes-disabled-tbody';
+    const targetBody = document.getElementById(targetBodyId);
+    if (!targetBody || row.parentElement === targetBody) {
+        return;
+    }
+
+    targetBody.appendChild(row);
+}
+
+function refreshSectionHeaders() {
+    const enabledHeader = document.getElementById('enabled-routes-header');
+    const disabledHeader = document.getElementById('disabled-routes-header');
+    const enabledRows = getRouteRows().filter(row => row.parentElement?.id === 'routes-enabled-tbody' && row.style.display !== 'none');
+    const disabledRows = getRouteRows().filter(row => row.parentElement?.id === 'routes-disabled-tbody' && row.style.display !== 'none');
+
+    if (enabledHeader) {
+        enabledHeader.style.display = enabledRows.length ? '' : 'none';
+    }
+    if (disabledHeader) {
+        disabledHeader.style.display = disabledRows.length ? '' : 'none';
+    }
+}
+
 function createRowElement(rowState) {
     const tr = document.createElement('tr');
+    tr.className = 'route-row';
     tr.dataset.pk = rowState.pk || '';
     tr.dataset.originalPk = rowState.originalPk || '';
     tr.dataset.originalGroup = rowState.originalGroup || '';
@@ -305,6 +405,7 @@ function createRowElement(rowState) {
     tr.dataset.originalFacilities = rowState.originalFacilities || '';
     tr.dataset.originalTags = rowState.originalTags || '';
     tr.dataset.originalColor = rowState.originalColor || '';
+    tr.dataset.originalEnabled = rowState.originalEnabled === false ? 'false' : 'true';
     tr.dataset.isNew = rowState.isNew ? 'true' : 'false';
     tr.innerHTML = `
         <td><input type="text" class="form-control form-control-sm route-identifier-input" name="identifier" value=""></td>
@@ -314,6 +415,9 @@ function createRowElement(rowState) {
                 <input type="color" name="color" class="route-color-input" value="#38bdf8" title="Custom route color">
                 <button type="button" class="route-color-clear" title="Clear custom color" onclick="clearRouteColor(this)">×</button>
             </div>
+        </td>
+        <td class="route-enabled-cell">
+            <input type="checkbox" name="enabled" checked>
         </td>
         <td><textarea class="form-control form-control-sm route-string-input" name="routestring" rows="1"></textarea></td>
         <td><input type="text" class="form-control form-control-sm" name="facilities" value=""></td>
@@ -326,6 +430,7 @@ function createRowElement(rowState) {
     tr.querySelector('[name="routestring"]').value = rowState.routestring || '';
     tr.querySelector('input[name="facilities"]').value = rowState.facilities || '';
     tr.querySelector('input[name="tags"]').value = rowState.tags || '';
+    tr.querySelector('input[name="enabled"]').checked = rowState.enabled !== false;
     const color = rowState.color || '';
     if (color) {
         const wrap = tr.querySelector('.route-color-wrap');
@@ -359,8 +464,8 @@ function isRowCompletelyEmpty(row) {
 }
 
 function ensureTrailingEmptyRow() {
-    const tbody = document.getElementById('routes-tbody');
-    const rows = Array.from(tbody.querySelectorAll('tr'));
+    const tbody = document.getElementById('routes-enabled-tbody');
+    const rows = getRouteRows().filter(row => row.parentElement?.id === 'routes-enabled-tbody');
 
     rows.forEach(row => delete row.dataset.placeholder);
 
@@ -373,18 +478,20 @@ function ensureTrailingEmptyRow() {
         removableEmptyRows.slice(0, -1).forEach(row => row.remove());
     }
 
-    const currentRows = Array.from(tbody.querySelectorAll('tr'));
+    const currentRows = getRouteRows().filter(row => row.parentElement?.id === 'routes-enabled-tbody');
     const lastRow = currentRows[currentRows.length - 1];
     if (!lastRow || !isRowCompletelyEmpty(lastRow)) {
         const trailingRow = createRowElement({ isNew: true });
         tbody.appendChild(trailingRow);
     }
 
-    const refreshedRows = Array.from(tbody.querySelectorAll('tr'));
+    const refreshedRows = getRouteRows().filter(row => row.parentElement?.id === 'routes-enabled-tbody');
     const trailing = refreshedRows[refreshedRows.length - 1];
     if (trailing && isRowCompletelyEmpty(trailing)) {
         trailing.dataset.placeholder = 'true';
     }
+
+    refreshSectionHeaders();
 }
 
 
@@ -392,7 +499,7 @@ function saveRoutesDraftToStorage() {
     if (isApplyingStoredDraft) {
         return;
     }
-    const rows = Array.from(document.querySelectorAll('#routes-tbody tr'));
+    const rows = getRouteRows();
     const changedRows = rows
         .filter(row => isRowChanged(row))
         .map(row => ({
@@ -403,10 +510,12 @@ function saveRoutesDraftToStorage() {
             originalFacilities: row.dataset.originalFacilities || '',
             originalTags: row.dataset.originalTags || '',
             originalColor: row.dataset.originalColor || '',
+            originalEnabled: row.dataset.originalEnabled !== 'false',
             isNew: row.dataset.isNew === 'true',
             identifier: row.querySelector('input[name="identifier"]').value || '',
             group: row.querySelector('input[name="group"]').value || '',
             color: getRowColor(row),
+            enabled: isRouteEnabled(row),
             routestring: row.querySelector('[name="routestring"]').value || '',
             facilities: row.querySelector('input[name="facilities"]').value || '',
             tags: row.querySelector('input[name="tags"]').value || '',
@@ -478,31 +587,34 @@ function restoreRoutesDraftFromStorage() {
 
     isApplyingStoredDraft = true;
     try {
-        const tbody = document.getElementById('routes-tbody');
+        const enabledTbody = document.getElementById('routes-enabled-tbody');
 
         for (const rowState of changedRows) {
             if (rowState.isNew) {
-                tbody.appendChild(createRowElement(rowState));
+                enabledTbody.appendChild(createRowElement(rowState));
             } else {
                 // Merge edits into the server-rendered row, if it still exists.
-                const existingRow = tbody.querySelector(`tr[data-original-pk="${CSS.escape(rowState.originalPk)}"]`);
+                const existingRow = document.querySelector(`tr.route-row[data-original-pk="${CSS.escape(rowState.originalPk)}"]`);
                 if (!existingRow) continue;
                 existingRow.querySelector('input[name="identifier"]').value = rowState.identifier || '';
                 existingRow.querySelector('input[name="group"]').value = rowState.group || '';
                 existingRow.querySelector('[name="routestring"]').value = rowState.routestring || '';
                 existingRow.querySelector('input[name="facilities"]').value = rowState.facilities || '';
                 existingRow.querySelector('input[name="tags"]').value = rowState.tags || '';
+                existingRow.querySelector('input[name="enabled"]').checked = rowState.enabled !== false;
                 const wrap = existingRow.querySelector('.route-color-wrap');
                 if (wrap) {
                     wrap.dataset.active = rowState.color ? 'true' : 'false';
                     if (rowState.color) existingRow.querySelector('input[name="color"]').value = rowState.color;
                 }
+                moveRowToSection(existingRow);
             }
         }
 
         if (typeof stored.filterSearch === 'string') {
             document.getElementById('filter-search').value = stored.filterSearch;
         }
+        getRouteRows().forEach(moveRowToSection);
         applyFilters();
     } finally {
         isApplyingStoredDraft = false;
@@ -581,9 +693,9 @@ function renderPlotWarnings(tokens) {
 }
 
 function collectVisibleRoutes() {
-    const rows = Array.from(document.querySelectorAll('#routes-tbody tr'));
+    const rows = getRouteRows();
     return rows
-        .filter(row => row.style.display !== 'none')
+        .filter(row => row.style.display !== 'none' && isRouteEnabled(row))
         .map(row => {
             const routestring = normalizeTokenField((row.querySelector('[name="routestring"]')?.value || ''));
             const color = getRowColor(row);
@@ -950,13 +1062,13 @@ function normalizeTokenField(value) {
 
 function addRow() {
     ensureTrailingEmptyRow();
-    const placeholderRow = document.querySelector('#routes-tbody tr[data-placeholder="true"]');
+    const placeholderRow = document.querySelector('tr.route-row[data-placeholder="true"]');
     if (placeholderRow) {
         placeholderRow.querySelector('input[name="identifier"]').focus();
         return;
     }
 
-    const tbody = document.getElementById('routes-tbody');
+    const tbody = document.getElementById('routes-enabled-tbody');
     const tr = createRowElement({ isNew: true });
     tbody.appendChild(tr);
     ensureTrailingEmptyRow();
@@ -973,7 +1085,9 @@ async function deleteRow(btn) {
     const row = btn.closest('tr');
     if (!row.dataset.originalPk) {
         row.remove();
+        ensureTrailingEmptyRow();
         saveRoutesDraftToStorage();
+        applyFilters();
         scheduleVisibleRoutesPlot();
         return;
     }
@@ -995,6 +1109,7 @@ async function deleteRow(btn) {
                     facilities: row.dataset.originalFacilities,
                     tags: row.dataset.originalTags,
                     color: row.dataset.originalColor || '',
+                    enabled: row.dataset.originalEnabled !== 'false',
                 },
             }),
         });
@@ -1022,6 +1137,7 @@ function isRowChanged(row) {
     const facilities = normalizeTokenField(row.querySelector('input[name="facilities"]').value);
     const tags = normalizeTokenField(row.querySelector('input[name="tags"]').value);
     const color = getRowColor(row);
+    const enabled = isRouteEnabled(row);
     if (row.dataset.isNew === 'true') {
         return Boolean(identifier) || Boolean(group) || Boolean(routestring) || Boolean(facilities) || Boolean(tags);
     }
@@ -1030,7 +1146,8 @@ function isRowChanged(row) {
         || routestring !== normalizeTokenField(row.dataset.originalRoutestring)
         || facilities !== normalizeTokenField(row.dataset.originalFacilities)
         || tags !== normalizeTokenField(row.dataset.originalTags)
-        || color !== (row.dataset.originalColor || '');
+        || color !== (row.dataset.originalColor || '')
+        || enabled !== (row.dataset.originalEnabled !== 'false');
 }
 
 function showAlert(message, type) {
@@ -1042,7 +1159,7 @@ function showAlert(message, type) {
 }
 
 function saveAll() {
-    const rows = document.querySelectorAll('#routes-tbody tr');
+    const rows = getRouteRows();
     const updates = [];
     rows.forEach(row => {
         const pk = row.dataset.pk;
@@ -1060,6 +1177,7 @@ function saveAll() {
         const tags = normalizeTokenField(tagsInput.value);
         tagsInput.value = tags;
         const color = getRowColor(row);
+        const enabled = isRouteEnabled(row);
         if (isRowChanged(row)) {
             updates.push({
                 pk,
@@ -1069,6 +1187,7 @@ function saveAll() {
                 facilities,
                 tags,
                 color,
+                enabled,
                 original: {
                     pk: row.dataset.originalPk,
                     group: row.dataset.originalGroup,
@@ -1076,6 +1195,7 @@ function saveAll() {
                     facilities: row.dataset.originalFacilities,
                     tags: row.dataset.originalTags,
                     color: row.dataset.originalColor || '',
+                    enabled: row.dataset.originalEnabled !== 'false',
                 },
             });
         }
@@ -1110,7 +1230,12 @@ function saveAll() {
     .catch(err => showAlert('Request failed: ' + err, 'danger'));
 }
 
-document.getElementById('routes-tbody').addEventListener('input', event => {
+const routesTableWrap = document.querySelector('.routes-table-wrap');
+
+routesTableWrap.addEventListener('input', event => {
+    if (!event.target.closest('tr.route-row')) {
+        return;
+    }
     if (['routestring', 'facilities', 'tags'].includes(event.target.name)) {
         if (/[,;]/.test(event.target.value)) {
             showAlert('Commas and semicolons are not allowed in route, facilities, or tags fields.', 'warning');
@@ -1126,15 +1251,32 @@ document.getElementById('routes-tbody').addEventListener('input', event => {
         const wrap = event.target.closest('.route-color-wrap');
         if (wrap) wrap.dataset.active = 'true';
     }
+    if (event.target.name === 'enabled') {
+        const row = event.target.closest('tr.route-row');
+        if (row) {
+            delete row.dataset.placeholder;
+            moveRowToSection(row);
+        }
+    }
     ensureTrailingEmptyRow();
     saveRoutesDraftToStorage();
     applyFilters();
     scheduleVisibleRoutesPlot();
 });
 
-document.getElementById('routes-tbody').addEventListener('change', event => {
+routesTableWrap.addEventListener('change', event => {
+    if (!event.target.closest('tr.route-row')) {
+        return;
+    }
     if (['routestring', 'facilities', 'tags'].includes(event.target.name)) {
         event.target.value = normalizeTokenField(event.target.value);
+    }
+    if (event.target.name === 'enabled') {
+        const row = event.target.closest('tr.route-row');
+        if (row) {
+            delete row.dataset.placeholder;
+            moveRowToSection(row);
+        }
     }
     ensureTrailingEmptyRow();
     saveRoutesDraftToStorage();
@@ -1146,8 +1288,9 @@ function applyFilters() {
     const searchTerm = document.getElementById('filter-search').value.trim().toLowerCase();
 
     ensureTrailingEmptyRow();
-    const rows = Array.from(document.querySelectorAll('#routes-tbody tr'));
-    const trailingPlaceholder = rows.length ? rows[rows.length - 1] : null;
+    const rows = getRouteRows();
+    rows.forEach(moveRowToSection);
+    const trailingPlaceholder = rows.find(row => row.dataset.placeholder === 'true') || null;
 
     rows.forEach(row => {
         if (trailingPlaceholder && row === trailingPlaceholder && row.dataset.placeholder === 'true') {
@@ -1176,6 +1319,8 @@ function applyFilters() {
 
         row.style.display = matchesSearch ? '' : 'none';
     });
+
+    refreshSectionHeaders();
 
     scheduleVisibleRoutesPlot();
 }
@@ -1212,7 +1357,7 @@ function moveTableFocus(currentField, rowOffset, columnOffset) {
         return false;
     }
 
-    const visibleRows = Array.from(document.querySelectorAll('#routes-tbody tr')).filter(row => row.style.display !== 'none');
+    const visibleRows = getRouteRows().filter(row => row.style.display !== 'none');
     const rowIndex = visibleRows.indexOf(currentRow);
     if (rowIndex === -1) {
         return false;
@@ -1246,7 +1391,10 @@ document.getElementById('filter-search').addEventListener('input', () => {
     applyFilters();
 });
 
-document.getElementById('routes-tbody').addEventListener('keydown', event => {
+routesTableWrap.addEventListener('keydown', event => {
+    if (!event.target.closest('tr.route-row')) {
+        return;
+    }
     const target = event.target;
     if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) {
         return;

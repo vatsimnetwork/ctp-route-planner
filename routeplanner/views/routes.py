@@ -32,6 +32,7 @@ def _create_revision_snapshot(routes_queryset):
             facilities=route.facilities,
             tags=route.tags,
             color=route.color,
+            enabled=route.enabled,
         )
         for route in routes_queryset
     ])
@@ -40,6 +41,26 @@ def _create_revision_snapshot(routes_queryset):
 
 def _normalize_token_text(value):
     return ' '.join((value or '').replace(',', ' ').replace(';', ' ').split())
+
+
+def _coerce_bool(value, default=None):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {'true', '1', 'yes', 'on'}:
+            return True
+        if normalized in {'false', '0', 'no', 'off'}:
+            return False
+        return None
+    if isinstance(value, (int, float)):
+        if value == 1:
+            return True
+        if value == 0:
+            return False
+    return None
 
 
 def _serialize_route(route):
@@ -51,6 +72,7 @@ def _serialize_route(route):
         'facilities': route.facilities,
         'tags': route.tags,
         'color': route.color,
+        'enabled': route.enabled,
     }
 
 
@@ -61,7 +83,11 @@ def _validate_route_payload(route_data, require_original=False, require_current_
     facilities = _normalize_token_text(route_data.get('facilities'))
     tags = _normalize_token_text(route_data.get('tags'))
     color = (route_data.get('color') or '').strip()
+    enabled = _coerce_bool(route_data.get('enabled'), default=True)
     original = route_data.get('original') or {}
+
+    if not isinstance(enabled, bool):
+        return None, 'Enabled must be true or false.'
 
     if require_current_values and not identifier:
         return None, 'Identifier is required.'
@@ -84,6 +110,7 @@ def _validate_route_payload(route_data, require_original=False, require_current_
         'facilities': facilities,
         'tags': tags,
         'color': color,
+        'enabled': enabled,
         'original': {
             'pk': (original.get('pk') or '').strip(),
             'group': (original.get('group') or '').strip(),
@@ -91,8 +118,12 @@ def _validate_route_payload(route_data, require_original=False, require_current_
             'facilities': _normalize_token_text(original.get('facilities')),
             'tags': _normalize_token_text(original.get('tags')),
             'color': (original.get('color') or '').strip(),
+            'enabled': _coerce_bool(original.get('enabled'), default=True),
         },
     }
+
+    if validated['original']['enabled'] is None:
+        return None, 'Original enabled value must be true or false.'
 
     if require_original and not validated['original']['pk']:
         return None, 'Original route reference is missing.'
@@ -126,6 +157,10 @@ def route_delete(request, identifier):
     original_facilities = _normalize_token_text(original.get('facilities'))
     original_tags = _normalize_token_text(original.get('tags'))
     original_color = (original.get('color') or '').strip()
+    original_enabled = _coerce_bool(original.get('enabled'), default=True)
+
+    if not isinstance(original_enabled, bool):
+        return JsonResponse({'error': 'Original enabled value must be true or false.'}, status=400)
 
     if not original_pk or original_pk != identifier:
         return JsonResponse({'error': 'Original route reference is missing.'}, status=400)
@@ -142,6 +177,7 @@ def route_delete(request, identifier):
         or route.facilities != original_facilities
         or route.tags != original_tags
         or route.color != original_color
+        or route.enabled != original_enabled
     ):
         return JsonResponse({'error': f"Conflict: route '{original_pk}' was changed by another user."}, status=409)
 
@@ -196,6 +232,7 @@ def routes_save(request):
             or route.facilities != original['facilities']
             or route.tags != original['tags']
             or route.color != original['color']
+            or route.enabled != original['enabled']
         ):
             return JsonResponse({'error': f"Conflict: route '{original['pk']}' was changed by another user."}, status=409)
 
@@ -218,6 +255,7 @@ def routes_save(request):
                 or route.facilities != original['facilities']
                 or route.tags != original['tags']
                 or route.color != original['color']
+                or route.enabled != original['enabled']
             ):
                 return JsonResponse({'error': f"Conflict: route '{current_identifier}' was changed by another user."}, status=409)
         else:
@@ -236,6 +274,7 @@ def routes_save(request):
                 facilities=route_data['facilities'],
                 tags=route_data['tags'],
                 color=route_data['color'],
+                enabled=route_data['enabled'],
             )
         elif new_identifier == route.identifier:
             route.group = route_data['group']
@@ -243,7 +282,8 @@ def routes_save(request):
             route.facilities = route_data['facilities']
             route.tags = route_data['tags']
             route.color = route_data['color']
-            route.save(update_fields=['group', 'routestring', 'facilities', 'tags', 'color'])
+            route.enabled = route_data['enabled']
+            route.save(update_fields=['group', 'routestring', 'facilities', 'tags', 'color', 'enabled'])
         else:
             route.delete()
             reserved_identifiers.discard(current_identifier)
@@ -255,6 +295,7 @@ def routes_save(request):
                 facilities=route_data['facilities'],
                 tags=route_data['tags'],
                 color=route_data['color'],
+                enabled=route_data['enabled'],
             )
 
         reserved_identifiers.add(route.identifier)

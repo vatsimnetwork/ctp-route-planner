@@ -18,6 +18,7 @@ class Route(models.Model):
     facilities = models.TextField(blank=True, default='')
     tags = models.TextField(blank=True, default='')
     color = models.CharField(max_length=20, blank=True, default='')
+    enabled = models.BooleanField(default=True, db_index=True)
 
 
 class RouteRevisionSet(models.Model):
@@ -36,6 +37,7 @@ class RouteRevisionEntry(models.Model):
     facilities = models.TextField(blank=True, default='')
     tags = models.TextField(blank=True, default='')
     color = models.CharField(max_length=20, blank=True, default='')
+    enabled = models.BooleanField(default=True, db_index=True)
 
     class Meta:
         ordering = ['group', 'identifier']
