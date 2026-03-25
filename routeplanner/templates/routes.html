@@ -1,7 +1,9 @@
 {% extends 'base.html' %}
+{% load static %}
 
 {% block content %}
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v8.2.0/ol.css">
+<link rel="stylesheet" href="{% static 'css/map.css' %}">
 <style>
     .routes-help-text {
         color: var(--muted-text);
@@ -349,6 +351,7 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/ol@v8.2.0/dist/ol.js"></script>
+<script src="{% static 'js/map-shared.js' %}"></script>
 <script>
 const CSRF_TOKEN = '{{ csrf_token }}';
 const SAVE_URL = '{% url "routes_save" %}';
@@ -361,6 +364,9 @@ const ROUTES_UI_STORAGE_KEY = 'ctp-routes-ui-v1';
 let routePlotRequestController = null;
 let routePlotDebounceTimer = null;
 let isApplyingStoredDraft = false;
+
+// Declared here so functions defined below can reference them before kit init.
+let map, routeLineSource, waypointSource, addWaypoint;
 
 function getRouteRows() {
     return Array.from(document.querySelectorAll('tr.route-row'));
@@ -559,9 +565,8 @@ function applyLayoutState(mapVisible, tableHidden) {
 
 function refreshMapSize() {
     requestAnimationFrame(() => {
-        map.updateSize();
-        // A second update after layout settles avoids zero-size renders.
-        setTimeout(() => map.updateSize(), 120);
+        if (map) map.updateSize();
+        setTimeout(() => { if (map) map.updateSize(); }, 120);
     });
 }
 
@@ -765,297 +770,46 @@ function scheduleVisibleRoutesPlot() {
     }
     routePlotDebounceTimer = setTimeout(plotVisibleRoutesOnMap, 120);
 }
-    function tileUrlForTheme(theme) {
-        return theme === 'dark'
-            ? 'https://{a-c}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png'
-            : 'https://{a-c}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png';
+
+// ---------------------------------------------------------------------------
+// Map kit initialisation
+// ---------------------------------------------------------------------------
+
+const kit = MapShared.createBaseMapKit({
+    mapTarget: 'map-canvas',
+    firUrl: GET_FIRS_URL,
+    waypointsUrl: GET_WAYPOINTS_BASE_URL,
+    initialTheme: document.documentElement.getAttribute('data-theme') || 'light',
+});
+
+map = kit.map;
+routeLineSource = kit.routeLineSource;
+waypointSource = kit.waypointSource;
+addWaypoint = kit.addWaypoint;
+
+const routeLineLayer = new ol.layer.Vector({
+    source: routeLineSource,
+    zIndex: 10,
+    style: function(feature) {
+        const useUserColors = document.getElementById('toggle-user-colors')?.checked;
+        const userColor = feature.get('userColor');
+        const color = (useUserColors && userColor) ? userColor : MapShared.getRouteColor(feature.get('group'));
+        return [
+            new ol.style.Style({ stroke: new ol.style.Stroke({ color: 'rgba(0,0,0,0.45)', width: 4 }) }),
+            new ol.style.Style({ stroke: new ol.style.Stroke({ color: color, width: 2 }) }),
+        ];
     }
+});
+map.addLayer(routeLineLayer);
 
-    function waypointPaletteForTheme(theme) {
-        return theme === 'dark'
-            ? { point: '#ffffff', text: '#ffffff', textStroke: '#000000' }
-            : { point: '#0f172a', text: '#111827', textStroke: '#ffffff' };
-    }
+document.getElementById('toggle-user-colors').addEventListener('change', function() {
+    routeLineLayer.changed();
+});
 
-    const WAYPOINT_POINT_MIN_ZOOM = 6;
-    const WAYPOINT_LABEL_MIN_ZOOM = 8;
+// ---------------------------------------------------------------------------
+// Route table functions
+// ---------------------------------------------------------------------------
 
-    function createWaypointPointStyle(palette) {
-        return new ol.style.Style({
-            image: new ol.style.Circle({
-                radius: 1,
-                fill: new ol.style.Fill({ color: palette.point }),
-                stroke: new ol.style.Stroke({ color: palette.point, width: 1 }),
-                opacity: 0.8
-            })
-        });
-    }
-
-    const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
-    let waypointPalette = waypointPaletteForTheme(currentTheme);
-    let allWaypointsPointStyle = createWaypointPointStyle(waypointPalette);
-    const waypointLabelStyleCache = new Map();
-
-    function getWaypointLabelStyle(identifier) {
-        let style = waypointLabelStyleCache.get(identifier);
-        if (style) return style;
-
-        style = new ol.style.Style({
-            text: new ol.style.Text({
-                text: identifier,
-                offsetY: -6,
-                fill: new ol.style.Fill({ color: waypointPalette.text }),
-                font: 'bold 9px monospace',
-                stroke: new ol.style.Stroke({ color: waypointPalette.textStroke, width: 1, opacity: 0.9 })
-            })
-        });
-        waypointLabelStyleCache.set(identifier, style);
-        return style;
-    }
-
-    const baseLayer = new ol.layer.Tile({
-        source: new ol.source.XYZ({
-            url: tileUrlForTheme(currentTheme)
-        })
-    });
-
-    const map = new ol.Map({
-        target: 'map-canvas',
-        layers: [baseLayer],
-        view: new ol.View({
-            center: ol.proj.fromLonLat([-30, 40]),
-            zoom: 1
-        })
-    });
-
-    const firSource = new ol.source.Vector({
-        url: GET_FIRS_URL,
-        format: new ol.format.GeoJSON()
-    });
-
-    function createWaypointsSource() {
-        return new ol.source.Vector();
-    }
-
-    let allWaypointsSource = createWaypointsSource();
-    let waypointFetchController = null;
-
-
-    // layer for the fir boundaries
-    const firLayer = new ol.layer.Vector({
-        source: firSource,
-        style: new ol.style.Style({
-            stroke: new ol.style.Stroke({
-                color: '#00ffcc',
-                width: 0.1,
-                opacity: 0.5
-            })
-        })
-    });
-
-    //layer for the firlabels
-    const firLabelLayer = new ol.layer.Vector({
-        source: firSource,
-        declutter: true,
-        style: function(feature) {
-            const props = feature.getProperties();
-            const lon = props.label_lon;
-            const lat = props.label_lat;
-            const identifier = props.id || props.name;
-
-            if (!lon || !lat || !identifier) return null;
-
-            return new ol.style.Style({
-                geometry: new ol.geom.Point(ol.proj.fromLonLat([lon, lat])),
-                text: new ol.style.Text({
-                    text: identifier,
-                    font: 'bold 10px monospace',
-                    fill: new ol.style.Fill({ color: 'rgba(0, 255, 204, 0.6)' }),
-                    stroke: new ol.style.Stroke({ color: 'rgba(0, 0, 0, 0.45)', width: 1 }),
-                    textAlign: 'center',
-                    
-                })
-            });
-        }
-    });
-
-    map.addLayer(firLayer);
-    map.addLayer(firLabelLayer);
-
-    const allWaypointsLayer = new ol.layer.Vector({
-        source: allWaypointsSource,
-        zIndex: 8,
-        style: allWaypointsPointStyle
-    });
-
-    const allWaypointsLabelLayer = new ol.layer.Vector({
-        source: allWaypointsSource,
-        declutter: true,
-        zIndex: 9,
-        style: function(feature) {
-            const identifier = feature.get('identifier');
-            if (!identifier) return null;
-            return getWaypointLabelStyle(identifier);
-        }
-    });
-
-    map.addLayer(allWaypointsLayer);
-    map.addLayer(allWaypointsLabelLayer);
-
-    function replaceWaypointsSource() {
-        allWaypointsSource = createWaypointsSource();
-        allWaypointsLayer.setSource(allWaypointsSource);
-        allWaypointsLabelLayer.setSource(allWaypointsSource);
-    }
-
-    function loadVisibleWaypoints() {
-        if (waypointFetchController) waypointFetchController.abort();
-
-        const enabled = document.getElementById('toggle-waypoints').checked;
-        const zoom = map.getView().getZoom() || 0;
-        const showPoints = enabled && zoom >= WAYPOINT_POINT_MIN_ZOOM;
-        const showLabels = enabled && zoom >= WAYPOINT_LABEL_MIN_ZOOM;
-
-        allWaypointsLayer.setVisible(showPoints);
-        allWaypointsLabelLayer.setVisible(showLabels);
-
-        if (!showPoints) {
-            allWaypointsSource.clear();
-            return;
-        }
-
-        const extent = map.getView().calculateExtent(map.getSize());
-        const [minX, minY, maxX, maxY] = extent;
-        const [minLon, minLat] = ol.proj.toLonLat([minX, minY]);
-        const [maxLon, maxLat] = ol.proj.toLonLat([maxX, maxY]);
-
-        waypointFetchController = new AbortController();
-        fetch(
-            `${GET_WAYPOINTS_BASE_URL}?minLon=${minLon}&minLat=${minLat}&maxLon=${maxLon}&maxLat=${maxLat}`,
-            { signal: waypointFetchController.signal }
-        )
-            .then(r => r.json())
-            .then(data => {
-                const features = new ol.format.GeoJSON().readFeatures(data, { featureProjection: 'EPSG:3857' });
-                allWaypointsSource.clear();
-                allWaypointsSource.addFeatures(features);
-            })
-            .catch(() => {});
-    }
-
-    map.on('moveend', loadVisibleWaypoints);
-
-    const routeLineSource = new ol.source.Vector();
-    const routeColorPalette = [
-        '#f87171',
-        '#38bdf8',
-        '#34d399',
-        '#fbbf24',
-        '#a78bfa',
-        '#fb7185',
-        '#06b6d4',
-        '#84cc16',
-        '#f59e0b',
-        '#8b5cf6',
-    ];
-    const fixedGroupColors = {
-        EMEA: '#8b5cf6',
-        AMAS: '#0ea5e9',
-        APAC: '#22c55e',
-        NAM: '#f59e0b',
-        LATAM: '#a855f7',
-        OCA: '#e11d48',
-    };
-    const groupColorMap = new Map();
-
-    function getRouteColor(group) {
-        const normalizedGroup = (group || '').trim().toUpperCase();
-        const key = normalizedGroup || '__UNGROUPED__';
-        if (fixedGroupColors[key]) {
-            return fixedGroupColors[key];
-        }
-        if (!groupColorMap.has(key)) {
-            const colorIndex = groupColorMap.size % routeColorPalette.length;
-            groupColorMap.set(key, routeColorPalette[colorIndex]);
-        }
-        return groupColorMap.get(key);
-    }
-
-    const routeLineLayer = new ol.layer.Vector({
-        source: routeLineSource,
-        zIndex: 10,
-        style: function(feature) {
-            const useUserColors = document.getElementById('toggle-user-colors')?.checked;
-            const userColor = feature.get('userColor');
-            const color = (useUserColors && userColor) ? userColor : getRouteColor(feature.get('group'));
-            return [
-                new ol.style.Style({ stroke: new ol.style.Stroke({ color: 'rgba(0,0,0,0.45)', width: 4 }) }),
-                new ol.style.Style({ stroke: new ol.style.Stroke({ color: color, width: 2 }) }),
-            ];
-        }
-    });
-    map.addLayer(routeLineLayer);
-
-    const waypointSource = new ol.source.Vector();
-    const waypointLayer = new ol.layer.Vector({ 
-        source: waypointSource,
-        zIndex: 11
-    });
-    map.addLayer(waypointLayer);
-
-    document.getElementById('toggle-sectors').addEventListener('change', function() {
-        const visible = this.checked;
-        firLayer.setVisible(visible);
-        firLabelLayer.setVisible(visible);
-    });
-
-    document.getElementById('toggle-waypoints').addEventListener('change', function() {
-        loadVisibleWaypoints();
-    });
-
-    document.getElementById('toggle-user-colors').addEventListener('change', function() {
-        routeLineLayer.changed();
-    });
-
-    function addWaypoint(lon, lat, name) {
-        const feature = new ol.Feature({
-            geometry: new ol.geom.Point(ol.proj.fromLonLat([lon, lat])),
-            name: name
-        });
-        feature.setStyle(new ol.style.Style({
-            image: new ol.style.Circle({
-                radius: 3,
-                fill: new ol.style.Fill({color: 'white'}),
-                stroke: new ol.style.Stroke({color: 'white', width: 1})
-            }),
-            text: new ol.style.Text({
-                text: name,
-                offsetY: -8,
-                fill: new ol.style.Fill({color: '#fff'}),
-                font: 'bold 9px monospace',
-                stroke: new ol.style.Stroke({color: '#000', width: 1, opacity: 0.7})
-            })
-        }));
-        waypointSource.addFeature(feature);
-    }
-
-    
-
-    window.addEventListener('themechange', function (event) {
-        const theme = event.detail && event.detail.theme ? event.detail.theme : 'light';
-        waypointPalette = waypointPaletteForTheme(theme);
-        allWaypointsPointStyle = createWaypointPointStyle(waypointPalette);
-        waypointLabelStyleCache.clear();
-        baseLayer.setSource(new ol.source.XYZ({
-            url: tileUrlForTheme(theme)
-        }));
-        allWaypointsLayer.setStyle(allWaypointsPointStyle);
-        allWaypointsLayer.changed();
-        allWaypointsLabelLayer.changed();
-    });
-
-    loadVisibleWaypoints();
-    window.addEventListener('resize', refreshMapSize);
 function normalizeTokenField(value) {
     return value.replace(/[,;]/g, ' ').split(/\s+/).map(part => part.trim()).filter(Boolean).join(' ');
 }
@@ -1453,24 +1207,6 @@ scheduleVisibleRoutesPlot();
         width: 100%;
         height: 100%;
     }
-    #map-controls {
-        position: absolute;
-        bottom: 20px; right: 20px;
-        background: rgba(248, 250, 252, 0.95);
-        color: #1f2937;
-        padding: 15px;
-        border: 1px solid #cbd5e1;
-        border-radius: 2px;
-        z-index: 1000;
-        font-family: 'Courier New', monospace;
-        font-size: 11px;
-    }
-    .control-header {
-        border-bottom: 1px dashed #64748b;
-        margin-bottom: 10px;
-        letter-spacing: 2px;
-    }
-
     @media (max-width: 1100px) {
         #map-div {
             position: relative;

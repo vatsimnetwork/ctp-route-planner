@@ -2,7 +2,7 @@ from django.db import models
 
 # Create your models here.
 class Location(models.Model):
-    identifier = models.CharField(max_length=10)
+    identifier = models.CharField(max_length=10, db_index=True)
     longitude = models.FloatField()
     latitude = models.FloatField()
     waypoint_id = models.IntegerField(null=True, blank=True, db_index=True)
@@ -68,8 +68,19 @@ class AirwayWaypoint(models.Model):
         unique_together = ('airway', 'order')
 
 
+class CustomFix(models.Model):
+    """User-defined fixes that take priority over navdata when plotting routes."""
+    identifier = models.CharField(max_length=10, unique=True)
+    latitude = models.FloatField()
+    longitude = models.FloatField()
+    note = models.CharField(max_length=255, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
 
-#class RouteSegement(models.Model):
-#    identifier = models.CharField(primary_key=True)
-#    routestring = models.CharField()
-#    segment = ArrayField(models.ForeignKey(Location, on_delete=models.CASCADE))
+    class Meta:
+        ordering = ['identifier']
+        verbose_name = 'Custom Fix'
+        verbose_name_plural = 'Custom Fixes'
+
+    def __str__(self):
+        return f"{self.identifier} ({self.latitude:.4f}, {self.longitude:.4f})"
+

@@ -1,0 +1,29 @@
+#map-controls {
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    background: rgba(248, 250, 252, 0.95);
+    color: #1f2937;
+    padding: 15px;
+    border: 1px solid #cbd5e1;
+    border-radius: 2px;
+    z-index: 1000;
+    font-family: 'Courier New', monospace;
+    font-size: 11px;
+}
+
+.control-header {
+    border-bottom: 1px dashed #64748b;
+    margin-bottom: 10px;
+    letter-spacing: 2px;
+}
+
+html[data-theme='dark'] #map-controls {
+    background: rgba(10, 10, 10, 0.9);
+    color: #00ffcc;
+    border-color: #00ffcc;
+}
+
+html[data-theme='dark'] .control-header {
+    border-bottom-color: #00ffcc;
+}

@@ -45,6 +45,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -124,11 +125,16 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
-STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 STATICFILES_DIRS = [
     BASE_DIR / 'core' / 'static',
 ]
+
+STORAGES = {
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
@@ -139,10 +145,19 @@ DISCORD_ROUTES_WEBHOOK_URL = os.environ.get('DISCORD_ROUTES_WEBHOOK_URL', '')
 
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
+if not DEBUG:
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = 31536000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+
 AUTH_INTERNAL_URL = os.environ.get('AUTH_INTERNAL_URL', 'http://auth-panel:8000')
 AUTH_PUBLIC_URL = os.environ.get('AUTH_PUBLIC_URL', 'http://localhost:9000')
 INTERNAL_API_KEY = os.environ.get('INTERNAL_API_KEY', '')
 APP_URL = os.environ.get('APP_URL', 'http://localhost:8000')
 MOUNT_PATH = urlparse(APP_URL).path.strip('/')
+
+STATIC_URL = f'/{MOUNT_PATH}/static/' if MOUNT_PATH else '/static/'
 
 FIR_BOUNDARIES_PATH = BASE_DIR / 'data' / 'fir_boundaries.geojson'

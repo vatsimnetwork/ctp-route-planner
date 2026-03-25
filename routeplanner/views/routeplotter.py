@@ -4,14 +4,18 @@ import requests
 from django.shortcuts import render
 from django.http import JsonResponse
 from django.conf import settings
+from django.core.cache import cache
 from django.db.models import Q
 from django.db.models.functions import Upper
-from routeplanner.models import Location, Airway, AirwayWaypoint, Route
+from routeplanner.models import Location, Airway, AirwayWaypoint, Route, CustomFix
 
 DIRECT_ROUTE_TOKENS = {'DCT', 'DIRECT'}
 
 def index(request):
     return render(request, 'routeplotter.html')
+
+_FIR_CACHE_KEY = 'fir_geojson_fallback'
+_FIR_CACHE_TTL = 86400  # 24 hours
 
 def fir_geojson(request):
     local_path = settings.FIR_BOUNDARIES_PATH
@@ -22,11 +26,17 @@ def fir_geojson(request):
         except (json.JSONDecodeError, OSError):
             pass
 
+    cached = cache.get(_FIR_CACHE_KEY)
+    if cached is not None:
+        return JsonResponse(cached)
+
     url = "https://raw.githubusercontent.com/vatsimnetwork/vatspy-data-project/master/Boundaries.geojson"
     try:
         response = requests.get(url, timeout=10)
         response.raise_for_status()
-        return JsonResponse(response.json())
+        data = response.json()
+        cache.set(_FIR_CACHE_KEY, data, _FIR_CACHE_TTL)
+        return JsonResponse(data)
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
     
@@ -109,19 +119,16 @@ def normalize_route_text(value: str) -> str:
     return ' '.join((value or '').replace(',', ' ').replace(';', ' ').split())
     
 def get_waypoint(waypoint_string: str, before_waypoint: Location):
-    try:
-        waypoints = Location.objects.filter(identifier__iexact=waypoint_string)
-        if len(waypoints) == 0:
-            return None
-        if len(waypoints) == 1:
-            return waypoints[0]
-        return min(
-            waypoints,
-            key=lambda wp: (wp.latitude - before_waypoint.latitude) ** 2
-                        + (wp.longitude - before_waypoint.longitude) ** 2
-        ) 
-    except Location.DoesNotExist:
+    waypoints = Location.objects.filter(identifier__iexact=waypoint_string)
+    if len(waypoints) == 0:
         return None
+    if len(waypoints) == 1:
+        return waypoints[0]
+    return min(
+        waypoints,
+        key=lambda wp: (wp.latitude - before_waypoint.latitude) ** 2
+                    + (wp.longitude - before_waypoint.longitude) ** 2
+    )
     
 def get_airway_coordinates(
     airway_identifier: str,
@@ -304,6 +311,7 @@ def build_plotting_caches(normalized_lines):
             'location_candidates_by_upper': {},
             'airway_by_upper': {},
             'airway_waypoints_by_upper': {},
+            'custom_fix_upper_set': set(),
         }
 
     locations = list(
@@ -316,6 +324,29 @@ def build_plotting_caches(normalized_lines):
     for location in locations:
         key = location.identifier.upper()
         location_candidates_by_upper.setdefault(key, []).append(location)
+
+    # Custom fixes take unconditional priority over navdata.
+    # Build synthetic Location-like objects so the rest of the pipeline is unchanged.
+    custom_fixes = list(
+        CustomFix.objects
+        .filter(identifier__in=token_upper_set)
+        .only('id', 'identifier', 'latitude', 'longitude')
+    )
+    custom_fix_upper_set = set()
+    for fix in custom_fixes:
+        key = fix.identifier.upper()
+        # Synthesise a Location instance so resolve_token / get_airway_coordinates
+        # work without any further changes.
+        synthetic = Location(
+            id=fix.id,
+            identifier=fix.identifier,
+            latitude=fix.latitude,
+            longitude=fix.longitude,
+        )
+        synthetic._is_custom_fix = True
+        # Replace navdata candidates entirely — custom fix is authoritative.
+        location_candidates_by_upper[key] = [synthetic]
+        custom_fix_upper_set.add(key)
 
     airways = list(
         Airway.objects
@@ -343,6 +374,7 @@ def build_plotting_caches(normalized_lines):
         'location_candidates_by_upper': location_candidates_by_upper,
         'airway_by_upper': airway_by_upper,
         'airway_waypoints_by_upper': airway_waypoints_by_upper,
+        'custom_fix_upper_set': custom_fix_upper_set,
     }
 
 
@@ -363,6 +395,7 @@ def plot_route(request):
     location_candidates_by_upper = caches['location_candidates_by_upper']
     airway_by_upper = caches['airway_by_upper']
     airway_waypoints_by_upper = caches['airway_waypoints_by_upper']
+    custom_fix_upper_set = caches['custom_fix_upper_set']
 
     result = []
     for normalized_line in normalized_lines:
@@ -419,7 +452,12 @@ def plot_route(request):
         for i, item in enumerate(resolved):
             if item['type'] == 'waypoint':
                 final_coords.append([item['lon'], item['lat']])
-                final_labels.append({'identifier': item['identifier'], 'lon': item['lon'], 'lat': item['lat']})
+                final_labels.append({
+                    'identifier': item['identifier'],
+                    'lon': item['lon'],
+                    'lat': item['lat'],
+                    'custom_fix': item['identifier'].upper() in custom_fix_upper_set,
+                })
             elif item['type'] == 'airway':
                 prev_item = next((r for r in reversed(resolved[:i]) if r['type'] == 'waypoint' and r.get('location')), None)
                 next_item = next((r for r in resolved[i + 1:] if r['type'] == 'waypoint' and r.get('location')), None)
