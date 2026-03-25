@@ -1,0 +1,53 @@
+/* ── Bootstrap overrides for custom dark theme ────────────────────────────── */
+
+html[data-theme='dark'] .text-muted {
+    color: var(--muted-text) !important;
+}
+
+html[data-theme='dark'] .table {
+    --bs-table-bg: transparent;
+    --bs-table-color: var(--text-color);
+    --bs-table-border-color: var(--surface-border);
+    --bs-table-striped-color: var(--text-color);
+    --bs-table-striped-bg: rgba(255, 255, 255, 0.04);
+    --bs-table-hover-color: var(--text-color);
+    --bs-table-hover-bg: rgba(255, 255, 255, 0.06);
+    color: var(--text-color);
+    border-color: var(--surface-border);
+}
+
+html[data-theme='dark'] .table code {
+    background-color: rgba(255, 255, 255, 0.08);
+    color: var(--text-color);
+}
+
+html[data-theme='dark'] .card {
+    color: var(--text-color);
+}
+
+html[data-theme='dark'] .dropdown-menu {
+    background-color: var(--surface-bg);
+    border-color: var(--surface-border);
+}
+
+html[data-theme='dark'] .dropdown-item {
+    color: var(--text-color);
+}
+
+html[data-theme='dark'] .dropdown-item:hover,
+html[data-theme='dark'] .dropdown-item:focus {
+    background-color: var(--toggle-hover);
+    color: var(--text-color);
+}
+
+html[data-theme='dark'] .dropdown-item.active,
+html[data-theme='dark'] .dropdown-item:active {
+    background-color: var(--vatsim-blue);
+    color: #fff;
+}
+
+.app-navbar .nav-link.dropdown-toggle:focus,
+.app-navbar .nav-link.dropdown-toggle.show {
+    color: var(--text-color);
+    background-color: transparent;
+}
