@@ -1,0 +1,172 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h2>Custom Fixes</h2>
+        {% if request.is_session_valid %}
+        <button class="btn btn-primary btn-sm" onclick="document.getElementById('add-fix-form').classList.toggle('d-none')">
+            Add Fix
+        </button>
+        {% endif %}
+    </div>
+
+    <p class="text-muted" style="font-size: 0.9rem;">
+        Custom fixes take priority over navdata when plotting routes.
+        Useful when a fix is missing from navdata, or when navdata resolves to the wrong position.
+    </p>
+
+    {% if request.is_session_valid %}
+    <div id="add-fix-form" class="d-none mb-4 p-3" style="background: var(--surface-bg); border: 1px solid var(--surface-border); border-radius: 6px;">
+        <div id="form-error" class="alert alert-danger d-none py-2" style="font-size: 0.875rem;"></div>
+        <div class="row g-2 align-items-end">
+            <div class="col-sm-2">
+                <label class="form-label form-label-sm mb-1">Identifier</label>
+                <input type="text" id="fix-identifier" class="form-control form-control-sm" placeholder="e.g. HOIST" maxlength="10">
+            </div>
+            <div class="col-sm-2">
+                <label class="form-label form-label-sm mb-1">Latitude</label>
+                <input type="number" id="fix-lat" class="form-control form-control-sm" placeholder="e.g. 48.1234" step="any" min="-90" max="90">
+            </div>
+            <div class="col-sm-2">
+                <label class="form-label form-label-sm mb-1">Longitude</label>
+                <input type="number" id="fix-lon" class="form-control form-control-sm" placeholder="e.g. -12.5678" step="any" min="-180" max="180">
+            </div>
+            <div class="col-sm-4">
+                <label class="form-label form-label-sm mb-1">Note <span class="text-muted">(optional)</span></label>
+                <input type="text" id="fix-note" class="form-control form-control-sm" placeholder="e.g. Gander boundary HOIST" maxlength="255">
+            </div>
+            <div class="col-sm-2">
+                <button class="btn btn-primary btn-sm w-100" onclick="submitFix()">Save</button>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if fixes %}
+    <table class="table table-sm" style="font-size: 0.9rem;">
+        <thead>
+            <tr>
+                <th>Identifier</th>
+                <th>Latitude</th>
+                <th>Longitude</th>
+                <th>Note</th>
+                {% if request.is_session_valid %}<th></th>{% endif %}
+            </tr>
+        </thead>
+        <tbody id="fixes-table-body">
+            {% for fix in fixes %}
+            <tr id="row-{{ fix.identifier }}">
+                <td><code>{{ fix.identifier }}</code></td>
+                <td>{{ fix.latitude }}</td>
+                <td>{{ fix.longitude }}</td>
+                <td class="text-muted">{{ fix.note }}</td>
+                {% if request.is_session_valid %}
+                <td class="text-end">
+                    <button class="btn btn-sm btn-outline-danger py-0 px-2" style="font-size: 0.8rem;" onclick="deleteFix('{{ fix.identifier }}')">Delete</button>
+                </td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="text-muted">No custom fixes defined yet.</p>
+    {% endif %}
+</div>
+
+<script>
+    const csrfToken = '{{ csrf_token }}';
+    const createUrl = '{% url "custom_fix_create" %}';
+    const deleteUrlBase = '{% url "custom_fix_delete" identifier="PLACEHOLDER" %}'.replace('PLACEHOLDER', '');
+
+    function submitFix() {
+        const identifier = document.getElementById('fix-identifier').value.trim().toUpperCase();
+        const lat = document.getElementById('fix-lat').value.trim();
+        const lon = document.getElementById('fix-lon').value.trim();
+        const note = document.getElementById('fix-note').value.trim();
+        const errorEl = document.getElementById('form-error');
+
+        errorEl.classList.add('d-none');
+
+        if (!identifier || !lat || !lon) {
+            errorEl.textContent = 'Identifier, latitude, and longitude are required.';
+            errorEl.classList.remove('d-none');
+            return;
+        }
+
+        fetch(createUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+            body: JSON.stringify({ identifier, latitude: parseFloat(lat), longitude: parseFloat(lon), note }),
+        })
+        .then(r => r.json().then(data => ({ ok: r.ok, data })))
+        .then(({ ok, data }) => {
+            if (!ok) {
+                errorEl.textContent = data.error || 'An error occurred.';
+                errorEl.classList.remove('d-none');
+                return;
+            }
+            // Update or insert row in table
+            const existingRow = document.getElementById('row-' + data.identifier);
+            const tbody = document.getElementById('fixes-table-body') || createTbody();
+            const rowHtml = buildRow(data);
+            if (existingRow) {
+                existingRow.outerHTML = rowHtml;
+            } else {
+                tbody.insertAdjacentHTML('beforeend', rowHtml);
+            }
+            // Reset form
+            document.getElementById('fix-identifier').value = '';
+            document.getElementById('fix-lat').value = '';
+            document.getElementById('fix-lon').value = '';
+            document.getElementById('fix-note').value = '';
+            document.getElementById('add-fix-form').classList.add('d-none');
+        })
+        .catch(() => {
+            errorEl.textContent = 'Network error — please try again.';
+            errorEl.classList.remove('d-none');
+        });
+    }
+
+    function buildRow(fix) {
+        return `<tr id="row-${fix.identifier}">
+            <td><code>${fix.identifier}</code></td>
+            <td>${fix.latitude}</td>
+            <td>${fix.longitude}</td>
+            <td class="text-muted">${fix.note || ''}</td>
+            <td class="text-end">
+                <button class="btn btn-sm btn-outline-danger py-0 px-2" style="font-size: 0.8rem;" onclick="deleteFix('${fix.identifier}')">Delete</button>
+            </td>
+        </tr>`;
+    }
+
+    function createTbody() {
+        // If the table doesn't exist yet (no fixes initially), create it
+        const container = document.querySelector('.container');
+        const noFixesMsg = container.querySelector('p.text-muted');
+        if (noFixesMsg) noFixesMsg.remove();
+        const table = document.createElement('table');
+        table.className = 'table table-sm';
+        table.style.fontSize = '0.9rem';
+        table.innerHTML = `<thead><tr><th>Identifier</th><th>Latitude</th><th>Longitude</th><th>Note</th><th></th></tr></thead><tbody id="fixes-table-body"></tbody>`;
+        container.appendChild(table);
+        return document.getElementById('fixes-table-body');
+    }
+
+    function deleteFix(identifier) {
+        if (!confirm(`Delete custom fix "${identifier}"?`)) return;
+        fetch(deleteUrlBase + identifier + '/', {
+            method: 'POST',
+            headers: { 'X-CSRFToken': csrfToken },
+        })
+        .then(r => r.json().then(data => ({ ok: r.ok, data })))
+        .then(({ ok, data }) => {
+            if (!ok) { alert(data.error || 'Delete failed.'); return; }
+            const row = document.getElementById('row-' + identifier);
+            if (row) row.remove();
+        });
+    }
+</script>
+{% endblock %}
