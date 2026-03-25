@@ -2,7 +2,7 @@ from django.db import models
 
 # Create your models here.
 class Location(models.Model):
-    identifier = models.CharField(max_length=10)
+    identifier = models.CharField(max_length=10, db_index=True)
     longitude = models.FloatField()
     latitude = models.FloatField()
     waypoint_id = models.IntegerField(null=True, blank=True, db_index=True)
@@ -67,9 +67,3 @@ class AirwayWaypoint(models.Model):
         ordering = ['order']
         unique_together = ('airway', 'order')
 
-
-
-#class RouteSegement(models.Model):
-#    identifier = models.CharField(primary_key=True)
-#    routestring = models.CharField()
-#    segment = ArrayField(models.ForeignKey(Location, on_delete=models.CASCADE))

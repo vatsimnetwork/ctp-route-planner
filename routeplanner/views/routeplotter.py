@@ -4,6 +4,7 @@ import requests
 from django.shortcuts import render
 from django.http import JsonResponse
 from django.conf import settings
+from django.core.cache import cache
 from django.db.models import Q
 from django.db.models.functions import Upper
 from routeplanner.models import Location, Airway, AirwayWaypoint, Route
@@ -12,6 +13,9 @@ DIRECT_ROUTE_TOKENS = {'DCT', 'DIRECT'}
 
 def index(request):
     return render(request, 'routeplotter.html')
+
+_FIR_CACHE_KEY = 'fir_geojson_fallback'
+_FIR_CACHE_TTL = 86400  # 24 hours
 
 def fir_geojson(request):
     local_path = settings.FIR_BOUNDARIES_PATH
@@ -22,11 +26,17 @@ def fir_geojson(request):
         except (json.JSONDecodeError, OSError):
             pass
 
+    cached = cache.get(_FIR_CACHE_KEY)
+    if cached is not None:
+        return JsonResponse(cached)
+
     url = "https://raw.githubusercontent.com/vatsimnetwork/vatspy-data-project/master/Boundaries.geojson"
     try:
         response = requests.get(url, timeout=10)
         response.raise_for_status()
-        return JsonResponse(response.json())
+        data = response.json()
+        cache.set(_FIR_CACHE_KEY, data, _FIR_CACHE_TTL)
+        return JsonResponse(data)
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
     
@@ -109,19 +119,16 @@ def normalize_route_text(value: str) -> str:
     return ' '.join((value or '').replace(',', ' ').replace(';', ' ').split())
     
 def get_waypoint(waypoint_string: str, before_waypoint: Location):
-    try:
-        waypoints = Location.objects.filter(identifier__iexact=waypoint_string)
-        if len(waypoints) == 0:
-            return None
-        if len(waypoints) == 1:
-            return waypoints[0]
-        return min(
-            waypoints,
-            key=lambda wp: (wp.latitude - before_waypoint.latitude) ** 2
-                        + (wp.longitude - before_waypoint.longitude) ** 2
-        ) 
-    except Location.DoesNotExist:
+    waypoints = Location.objects.filter(identifier__iexact=waypoint_string)
+    if len(waypoints) == 0:
         return None
+    if len(waypoints) == 1:
+        return waypoints[0]
+    return min(
+        waypoints,
+        key=lambda wp: (wp.latitude - before_waypoint.latitude) ** 2
+                    + (wp.longitude - before_waypoint.longitude) ** 2
+    )
     
 def get_airway_coordinates(
     airway_identifier: str,

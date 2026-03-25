@@ -1,12 +1,16 @@
-from django.views import View
-from django.shortcuts import redirect, render
-from django.core.paginator import Paginator
-from django.conf import settings
-from routeplanner.models import Location, Airway, AirwayWaypoint
-from routeplanner.permissions import is_administrator
-from django.db import transaction
 import csv
 import json
+import logging
+
+from django.conf import settings
+from django.core.paginator import Paginator
+from django.db import transaction
+from django.shortcuts import redirect, render
+
+from routeplanner.models import Location, Airway, AirwayWaypoint
+from routeplanner.permissions import is_administrator
+
+logger = logging.getLogger(__name__)
 
 @is_administrator
 def waypoint_settings(request):
@@ -103,101 +107,81 @@ def airway_settings(request):
 def import_airway_segments(request):
     if request.method == 'POST' and request.FILES.get('csv_file'):
         csv_file = request.FILES['csv_file']
-        
         decoded_file = csv_file.read().decode('utf-8').splitlines()
         reader = csv.DictReader(decoded_file)
 
-        # Cache für Waypoints: waypoint_id -> Location
-        loc_cache = {l.waypoint_id: l for l in Location.objects.filter(waypoint_id__isnull=False)}
-        
-        last_points = {}
-        waypoints_to_create = []
-        created_waypoints = {}  # waypoint_id -> Location
+        loc_cache = {loc.waypoint_id: loc for loc in Location.objects.filter(waypoint_id__isnull=False)}
 
         try:
             with transaction.atomic():
-                # Erster Pass: Alle rows einlesen, fehlende Waypoints sammeln
                 rows_list = list(reader)
-                
+
+                # Collect waypoints missing from the DB in one pass.
+                missing_waypoints = {}
                 for row in rows_list:
                     from_id = int(row['from_waypoint_id'])
                     to_id = int(row['to_waypoint_id'])
-                    
-                    # Falls Waypoint nicht im Cache und noch nicht zum Erstellen vorgemerkt
-                    if from_id not in loc_cache and from_id not in created_waypoints:
-                        waypoints_to_create.append((
-                            from_id,
-                            row['from_lon'],
-                            row['from_lat']
-                        ))
-                    
-                    if to_id not in loc_cache and to_id not in created_waypoints:
-                        waypoints_to_create.append((
-                            to_id,
-                            row['to_lon'],
-                            row['to_lat']
-                        ))
-                
-                # Duplikate entfernen beim Erstellen
-                unique_waypoints = {}
-                for wp_id, lon, lat in waypoints_to_create:
-                    if wp_id not in unique_waypoints:
-                        unique_waypoints[wp_id] = (lon, lat)
-                
-                # Batch-create fehlende Waypoints
-                batch_create = [
-                    Location(
-                        waypoint_id=wp_id,
-                        longitude=float(lon),
-                        latitude=float(lat)
-                    )
-                    for wp_id, (lon, lat) in unique_waypoints.items()
-                ]
-                
-                if batch_create:
-                    created = Location.objects.bulk_create(batch_create, ignore_conflicts=True)
+                    if from_id not in loc_cache and from_id not in missing_waypoints:
+                        missing_waypoints[from_id] = (row['from_lon'], row['from_lat'])
+                    if to_id not in loc_cache and to_id not in missing_waypoints:
+                        missing_waypoints[to_id] = (row['to_lon'], row['to_lat'])
+
+                # Batch-create missing waypoints in one query.
+                created_waypoints = {}
+                if missing_waypoints:
+                    created = Location.objects.bulk_create([
+                        Location(waypoint_id=wp_id, longitude=float(lon), latitude=float(lat))
+                        for wp_id, (lon, lat) in missing_waypoints.items()
+                    ], ignore_conflicts=True)
                     for loc in created:
                         created_waypoints[loc.waypoint_id] = loc
 
-                # Zweiter Pass: Airways importieren
+                # Pre-create all airways in two queries (fetch existing, bulk-create new).
+                airway_names = {row['airway_name'] for row in rows_list}
+                airway_cache = {a.identifier: a for a in Airway.objects.filter(identifier__in=airway_names)}
+                new_airways = [Airway(identifier=name) for name in airway_names if name not in airway_cache]
+                if new_airways:
+                    Airway.objects.bulk_create(new_airways, ignore_conflicts=True)
+                    airway_cache = {a.identifier: a for a in Airway.objects.filter(identifier__in=airway_names)}
+
+                # Build all AirwayWaypoint records in memory, then upsert in one batch.
+                last_points = {}
+                waypoint_map: dict[tuple, AirwayWaypoint] = {}
                 for row in rows_list:
                     aw_name = row['airway_name']
                     seq = int(row['sequence_no'])
                     from_id = int(row['from_waypoint_id'])
                     to_id = int(row['to_waypoint_id'])
 
-                    airway, _ = Airway.objects.get_or_create(identifier=aw_name)
-
-                    # Waypoint aus Cache oder gerade erstellt
+                    airway = airway_cache.get(aw_name)
                     start_node = loc_cache.get(from_id) or created_waypoints.get(from_id)
-
-                    if start_node:
-                        AirwayWaypoint.objects.update_or_create(
-                            airway=airway,
-                            order=seq,
-                            defaults={'waypoint': start_node}
+                    if airway and start_node:
+                        # Use dict to deduplicate — last row wins for same (airway, order).
+                        waypoint_map[(aw_name, seq)] = AirwayWaypoint(
+                            airway=airway, waypoint=start_node, order=seq
                         )
+                    last_points[aw_name] = {'waypoint_id': to_id, 'final_order': seq + 1}
 
-                    last_points[aw_name] = {
-                        'waypoint_id': to_id,
-                        'final_order': seq + 1
-                    }
-
-                # Finale Punkte hinzufügen
                 for aw_name, data in last_points.items():
+                    airway = airway_cache.get(aw_name)
                     end_node = loc_cache.get(data['waypoint_id']) or created_waypoints.get(data['waypoint_id'])
-                    if end_node:
-                        airway = Airway.objects.get(identifier=aw_name)
-                        AirwayWaypoint.objects.update_or_create(
-                            airway=airway,
-                            order=data['final_order'],
-                            defaults={'waypoint': end_node}
+                    if airway and end_node:
+                        order = data['final_order']
+                        waypoint_map[(aw_name, order)] = AirwayWaypoint(
+                            airway=airway, waypoint=end_node, order=order
                         )
+
+                if waypoint_map:
+                    AirwayWaypoint.objects.bulk_create(
+                        waypoint_map.values(),
+                        update_conflicts=True,
+                        update_fields=['waypoint'],
+                        unique_fields=['airway', 'order'],
+                    )
 
         except Exception as e:
-            print(f"Fehler beim Import: {e}")
+            logger.exception("Airway import failed: %s", e)
 
-            
     return redirect('airways_settings')
 
 @is_administrator
