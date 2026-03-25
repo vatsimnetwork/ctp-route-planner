@@ -5,6 +5,7 @@ from django.views.generic import RedirectView
 
 from .views.home import home
 from .views.routeplotter import index, fir_geojson, waypoints_geojson, plot_route
+from .views.highlightedwaypoints import highlighted_waypoints, highlighted_waypoint_create, highlighted_waypoint_delete, highlighted_waypoints_geojson
 from .views.setting import waypoint_settings, import_waypoints, delete_all_waypoints, firboundaries_settings, upload_fir_boundaries, delete_fir_boundaries, airway_settings, import_airway_segments, delete_all_airways
 from .views.routes import route_delete, routes, routes_save
 from .views.customfixes import custom_fixes, custom_fix_create, custom_fix_delete
@@ -41,4 +42,8 @@ urlpatterns = [
     path('customfixes/', custom_fixes, name='custom_fixes'),
     path('customfixes/create/', custom_fix_create, name='custom_fix_create'),
     path('customfixes/delete/<str:identifier>/', custom_fix_delete, name='custom_fix_delete'),
+    path('settings/highlightedwaypoints/', highlighted_waypoints, name='highlighted_waypoints'),
+    path('settings/highlightedwaypoints/create/', highlighted_waypoint_create, name='highlighted_waypoint_create'),
+    path('settings/highlightedwaypoints/delete/<str:identifier>/', highlighted_waypoint_delete, name='highlighted_waypoint_delete'),
+    path('routeplotter/gethighlightedwaypoints/', highlighted_waypoints_geojson, name='highlighted_waypoints_geojson'),
 ]

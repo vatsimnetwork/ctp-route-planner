@@ -180,6 +180,7 @@
                         {% if "administrator" in request.user_roles or "route_staff" in request.user_roles or "developer" in request.user_roles %}
                             <li class="nav-item"><a class="nav-link" href="{% url 'routes' %}">Routes</a></li>
                             <li class="nav-item"><a class="nav-link" href="{% url 'custom_fixes' %}">Custom Fixes</a></li>
+                            <li class="nav-item"><a class="nav-link" href="{% url 'highlighted_waypoints' %}">Highlighted Waypoints</a></li>
                         {% endif %}
                         {% if "administrator" in request.user_roles %}
                             <li class="nav-item dropdown">

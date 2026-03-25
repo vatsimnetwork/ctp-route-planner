@@ -70,7 +70,7 @@
      *   refreshMapSize,
      * }}
      */
-    function createBaseMapKit({ mapTarget, firUrl, waypointsUrl, initialTheme }) {
+    function createBaseMapKit({ mapTarget, firUrl, waypointsUrl, highlightedWaypointsUrl, initialTheme }) {
         let waypointPalette = waypointPaletteForTheme(initialTheme);
         let allWaypointsPointStyle = createWaypointPointStyle(waypointPalette);
         const waypointLabelStyleCache = new Map();
@@ -165,6 +165,53 @@
         map.addLayer(allWaypointsLabelLayer);
 
         const routeLineSource = new ol.source.Vector();
+
+        const highlightedWaypointsSource = new ol.source.Vector();
+        const highlightedWaypointsLayer = new ol.layer.Vector({
+            source: highlightedWaypointsSource,
+            zIndex: 12,
+            style: function (feature) {
+                const color = feature.get('color') || '#f97316';
+                const identifier = feature.get('identifier');
+                return new ol.style.Style({
+                    image: new ol.style.Circle({
+                        radius: 5,
+                        fill: new ol.style.Fill({ color: color }),
+                        stroke: new ol.style.Stroke({ color: '#ffffff', width: 1.5 }),
+                    }),
+                    text: new ol.style.Text({
+                        text: identifier,
+                        offsetY: -12,
+                        fill: new ol.style.Fill({ color: color }),
+                        font: 'bold 11px monospace',
+                        stroke: new ol.style.Stroke({ color: '#000000', width: 2 }),
+                    }),
+                });
+            },
+        });
+        map.addLayer(highlightedWaypointsLayer);
+
+        function loadHighlightedWaypoints() {
+            if (!highlightedWaypointsUrl) return;
+            fetch(highlightedWaypointsUrl)
+                .then(r => r.json())
+                .then(data => {
+                    const features = new ol.format.GeoJSON().readFeatures(data, { featureProjection: 'EPSG:3857' });
+                    highlightedWaypointsSource.clear();
+                    highlightedWaypointsSource.addFeatures(features);
+                })
+                .catch(() => {});
+        }
+
+        var highlightedToggle = document.getElementById('toggle-highlighted-waypoints');
+        if (highlightedToggle) {
+            highlightedToggle.addEventListener('change', function () {
+                highlightedWaypointsLayer.setVisible(this.checked);
+                map.render();
+            });
+        }
+
+        loadHighlightedWaypoints();
 
         const waypointSource = new ol.source.Vector();
         const waypointLayer = new ol.layer.Vector({ source: waypointSource, zIndex: 11 });
@@ -275,6 +322,9 @@
             allWaypointsLayer,
             allWaypointsLabelLayer,
             routeLineSource,
+            highlightedWaypointsSource,
+            highlightedWaypointsLayer,
+            loadHighlightedWaypoints,
             waypointSource,
             waypointLayer,
             loadVisibleWaypoints,

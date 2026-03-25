@@ -84,3 +84,19 @@ class CustomFix(models.Model):
     def __str__(self):
         return f"{self.identifier} ({self.latitude:.4f}, {self.longitude:.4f})"
 
+
+class HighlightedWaypoint(models.Model):
+    """Named waypoints that are always rendered on the map in a specific color."""
+    identifier = models.CharField(max_length=10, unique=True)
+    color = models.CharField(max_length=7, default='#f97316')
+    note = models.CharField(max_length=255, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['identifier']
+        verbose_name = 'Highlighted Waypoint'
+        verbose_name_plural = 'Highlighted Waypoints'
+
+    def __str__(self):
+        return f"{self.identifier} ({self.color})"
+

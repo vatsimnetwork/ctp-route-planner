@@ -79,7 +79,7 @@
 <script>
     const csrfToken = '{{ csrf_token }}';
     const createUrl = '{% url "custom_fix_create" %}';
-    const deleteUrlBase = '{% url "custom_fix_delete" identifier="PLACEHOLDER" %}'.replace('PLACEHOLDER', '');
+    const deleteUrlTemplate = '{% url "custom_fix_delete" identifier="PLACEHOLDER" %}';
 
     function submitFix() {
         const identifier = document.getElementById('fix-identifier').value.trim().toUpperCase();
@@ -156,7 +156,7 @@
 
     function deleteFix(identifier) {
         if (!confirm(`Delete custom fix "${identifier}"?`)) return;
-        fetch(deleteUrlBase + identifier + '/', {
+        fetch(deleteUrlTemplate.replace('PLACEHOLDER', identifier), {
             method: 'POST',
             headers: { 'X-CSRFToken': csrfToken },
         })
