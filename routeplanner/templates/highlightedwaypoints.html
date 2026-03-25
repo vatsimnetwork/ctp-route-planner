@@ -1,0 +1,160 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block content %}
+<div class="container mt-4" id="highlighted-waypoints-content">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h2>Highlighted Waypoints</h2>
+        <button class="btn btn-primary btn-sm" onclick="document.getElementById('add-form').classList.toggle('d-none')">
+            Add
+        </button>
+    </div>
+
+    <p class="text-muted" style="font-size: 0.9rem;">
+        These waypoints are always rendered on the map in their configured color, regardless of whether they are part of a plotted route.
+        Useful for highlighting major airports or key fixes.
+    </p>
+
+    <div id="add-form" class="d-none mb-4 p-3" style="background: var(--surface-bg); border: 1px solid var(--surface-border); border-radius: 6px;">
+        <div id="form-error" class="alert alert-danger d-none py-2" style="font-size: 0.875rem;"></div>
+        <div class="row g-2 align-items-end">
+            <div class="col-sm-2">
+                <label class="form-label form-label-sm mb-1">Identifier</label>
+                <input type="text" id="hw-identifier" class="form-control form-control-sm" placeholder="e.g. EGLL" maxlength="10">
+            </div>
+            <div class="col-sm-2">
+                <label class="form-label form-label-sm mb-1">Color</label>
+                <input type="color" id="hw-color" class="form-control form-control-sm form-control-color" value="#f97316">
+            </div>
+            <div class="col-sm-5">
+                <label class="form-label form-label-sm mb-1">Note <span class="text-muted">(optional)</span></label>
+                <input type="text" id="hw-note" class="form-control form-control-sm" placeholder="e.g. London Heathrow" maxlength="255">
+            </div>
+            <div class="col-sm-2">
+                <button class="btn btn-primary btn-sm w-100" onclick="submitEntry()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    {% if entries %}
+    <table class="table table-sm" style="font-size: 0.9rem;">
+        <thead>
+            <tr>
+                <th>Identifier</th>
+                <th>Color</th>
+                <th>Note</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody id="entries-table-body">
+            {% for entry in entries %}
+            <tr id="row-{{ entry.identifier }}">
+                <td><code>{{ entry.identifier }}</code></td>
+                <td>
+                    <span style="display:inline-block;width:14px;height:14px;background:{{ entry.color }};border-radius:3px;vertical-align:middle;margin-right:6px;border:1px solid rgba(0,0,0,0.15);"></span>
+                    <code>{{ entry.color }}</code>
+                </td>
+                <td class="text-muted">{{ entry.note }}</td>
+                <td class="text-end">
+                    <button class="btn btn-sm btn-outline-danger py-0 px-2" style="font-size: 0.8rem;" onclick="deleteEntry('{{ entry.identifier }}')">Delete</button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="text-muted" id="no-entries-msg">No highlighted waypoints defined yet.</p>
+    {% endif %}
+</div>
+
+<script>
+    const csrfToken = '{{ csrf_token }}';
+    const createUrl = '{% url "highlighted_waypoint_create" %}';
+    const deleteUrlTemplate = '{% url "highlighted_waypoint_delete" identifier="PLACEHOLDER" %}';
+
+    function submitEntry() {
+        const identifier = document.getElementById('hw-identifier').value.trim().toUpperCase();
+        const color = document.getElementById('hw-color').value.trim();
+        const note = document.getElementById('hw-note').value.trim();
+        const errorEl = document.getElementById('form-error');
+
+        errorEl.classList.add('d-none');
+
+        if (!identifier) {
+            errorEl.textContent = 'Identifier is required.';
+            errorEl.classList.remove('d-none');
+            return;
+        }
+
+        fetch(createUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+            body: JSON.stringify({ identifier, color, note }),
+        })
+        .then(r => r.json().then(data => ({ ok: r.ok, data })))
+        .then(({ ok, data }) => {
+            if (!ok) {
+                errorEl.textContent = data.error || 'An error occurred.';
+                errorEl.classList.remove('d-none');
+                return;
+            }
+            const existingRow = document.getElementById('row-' + data.identifier);
+            const tbody = document.getElementById('entries-table-body') || createTbody();
+            const rowHtml = buildRow(data);
+            if (existingRow) {
+                existingRow.outerHTML = rowHtml;
+            } else {
+                tbody.insertAdjacentHTML('beforeend', rowHtml);
+            }
+            document.getElementById('hw-identifier').value = '';
+            document.getElementById('hw-color').value = '#f97316';
+            document.getElementById('hw-note').value = '';
+            document.getElementById('add-form').classList.add('d-none');
+        })
+        .catch(() => {
+            errorEl.textContent = 'Network error — please try again.';
+            errorEl.classList.remove('d-none');
+        });
+    }
+
+    function buildRow(entry) {
+        return `<tr id="row-${entry.identifier}">
+            <td><code>${entry.identifier}</code></td>
+            <td>
+                <span style="display:inline-block;width:14px;height:14px;background:${entry.color};border-radius:3px;vertical-align:middle;margin-right:6px;border:1px solid rgba(0,0,0,0.15);"></span>
+                <code>${entry.color}</code>
+            </td>
+            <td class="text-muted">${entry.note || ''}</td>
+            <td class="text-end">
+                <button class="btn btn-sm btn-outline-danger py-0 px-2" style="font-size: 0.8rem;" onclick="deleteEntry('${entry.identifier}')">Delete</button>
+            </td>
+        </tr>`;
+    }
+
+    function createTbody() {
+        const container = document.getElementById('highlighted-waypoints-content');
+        const noEntriesMsg = document.getElementById('no-entries-msg');
+        if (noEntriesMsg) noEntriesMsg.remove();
+        const table = document.createElement('table');
+        table.className = 'table table-sm';
+        table.style.fontSize = '0.9rem';
+        table.innerHTML = `<thead><tr><th>Identifier</th><th>Color</th><th>Note</th><th></th></tr></thead><tbody id="entries-table-body"></tbody>`;
+        container.appendChild(table);
+        return document.getElementById('entries-table-body');
+    }
+
+    function deleteEntry(identifier) {
+        if (!confirm(`Delete highlighted waypoint "${identifier}"?`)) return;
+        fetch(deleteUrlTemplate.replace('PLACEHOLDER', identifier), {
+            method: 'POST',
+            headers: { 'X-CSRFToken': csrfToken },
+        })
+        .then(r => r.json().then(data => ({ ok: r.ok, data })))
+        .then(({ ok, data }) => {
+            if (!ok) { alert(data.error || 'Delete failed.'); return; }
+            const row = document.getElementById('row-' + identifier);
+            if (row) row.remove();
+        });
+    }
+</script>
+{% endblock %}

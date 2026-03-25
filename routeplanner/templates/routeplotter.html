@@ -30,6 +30,10 @@
                 <input type="checkbox" id="toggle-waypoints" >
                 <label for="toggle-waypoints">Waypoints</label>
             </div>
+            <div class="form-check">
+                <input type="checkbox" id="toggle-highlighted-waypoints" checked>
+                <label for="toggle-highlighted-waypoints">Highlighted</label>
+            </div>
         </div>
     </div>
 </div>
@@ -42,6 +46,7 @@
     const PLOT_ROUTE_URL = '{% url "plot_route" %}';
     const GET_FIRS_URL = '{% url "fir_geojson" %}';
     const GET_WAYPOINTS_BASE_URL = '{% url "waypoints_geojson" %}';
+    const GET_HIGHLIGHTED_WAYPOINTS_URL = '{% url "highlighted_waypoints_geojson" %}';
 
     const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
 
@@ -49,6 +54,7 @@
         mapTarget: 'map-div',
         firUrl: GET_FIRS_URL,
         waypointsUrl: GET_WAYPOINTS_BASE_URL,
+        highlightedWaypointsUrl: GET_HIGHLIGHTED_WAYPOINTS_URL,
         initialTheme: currentTheme,
     });
 
