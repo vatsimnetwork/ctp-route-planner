@@ -161,3 +161,44 @@ MOUNT_PATH = urlparse(APP_URL).path.strip('/')
 STATIC_URL = f'/{MOUNT_PATH}/static/' if MOUNT_PATH else '/static/'
 
 FIR_BOUNDARIES_PATH = BASE_DIR / 'data' / 'fir_boundaries.geojson'
+
+VATSWIM_ROUTE_RESOLVE_URL = os.environ.get(
+    'VATSWIM_ROUTE_RESOLVE_URL',
+    'https://perti.vatcscc.org/api/swim/v1/routes/resolve',
+)
+VATSWIM_API_KEY = os.environ.get('VATSWIM_API_KEY', '')
+
+# =========================================
+# CTP-API Configuration
+# =========================================
+# URL for the .NET CTP-API service
+CTP_API_BASE_URL = os.environ.get(
+    'CTP_API_BASE_URL',
+    'http://localhost:5000/api'  # Local development default
+)
+
+# API Key for authentication with CTP-API
+# If the CTP-API uses API Key Middleware, provide the key here
+CTP_API_KEY = os.environ.get('CTP_API_KEY', '')
+
+# Timeout for CTP-API requests in seconds
+CTP_API_TIMEOUT = int(os.environ.get('CTP_API_TIMEOUT', 30))
+
+# Cache TTL for route data in seconds (default: 10 minutes)
+CTP_API_CACHE_TTL = int(os.environ.get('CTP_API_CACHE_TTL', 600))
+
+# =========================================
+# Cache Configuration for Route Data
+# =========================================
+# Django cache framework is used for caching routes from CTP-API
+# This improves performance and provides fallback during API outages
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'route-planner-cache',
+        'TIMEOUT': CTP_API_CACHE_TTL,
+        'OPTIONS': {
+            'MAX_ENTRIES': 1000,
+        }
+    }
+}

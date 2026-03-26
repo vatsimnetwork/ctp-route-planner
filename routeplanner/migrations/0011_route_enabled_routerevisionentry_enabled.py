@@ -3,6 +3,38 @@
 from django.db import migrations, models
 
 
+def add_enabled_columns_if_missing(apps, schema_editor):
+    Route = apps.get_model('routeplanner', 'Route')
+    RouteRevisionEntry = apps.get_model('routeplanner', 'RouteRevisionEntry')
+
+    connection = schema_editor.connection
+    with connection.cursor() as cursor:
+        route_table_columns = {
+            col.name for col in connection.introspection.get_table_description(cursor, Route._meta.db_table)
+        }
+        revision_table_columns = {
+            col.name
+            for col in connection.introspection.get_table_description(cursor, RouteRevisionEntry._meta.db_table)
+        }
+
+    if 'enabled' not in route_table_columns:
+        schema_editor.add_field(
+            Route,
+            models.BooleanField(default=True, db_index=True, name='enabled'),
+        )
+
+    if 'enabled' not in revision_table_columns:
+        schema_editor.add_field(
+            RouteRevisionEntry,
+            models.BooleanField(default=True, db_index=True, name='enabled'),
+        )
+
+
+def noop_reverse(apps, schema_editor):
+    # Do not attempt to drop columns on reverse for safety.
+    pass
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -10,14 +42,21 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddField(
-            model_name='route',
-            name='enabled',
-            field=models.BooleanField(db_index=True, default=True),
-        ),
-        migrations.AddField(
-            model_name='routerevisionentry',
-            name='enabled',
-            field=models.BooleanField(db_index=True, default=True),
+        migrations.SeparateDatabaseAndState(
+            database_operations=[
+                migrations.RunPython(add_enabled_columns_if_missing, reverse_code=noop_reverse),
+            ],
+            state_operations=[
+                migrations.AddField(
+                    model_name='route',
+                    name='enabled',
+                    field=models.BooleanField(db_index=True, default=True),
+                ),
+                migrations.AddField(
+                    model_name='routerevisionentry',
+                    name='enabled',
+                    field=models.BooleanField(db_index=True, default=True),
+                ),
+            ],
         ),
     ]

@@ -1,6 +1,7 @@
 import json
 import re
 import requests
+import logging
 from django.shortcuts import render
 from django.http import JsonResponse
 from django.conf import settings
@@ -8,8 +9,13 @@ from django.core.cache import cache
 from django.db.models import Q
 from django.db.models.functions import Upper
 from routeplanner.models import Location, Airway, AirwayWaypoint, Route, CustomFix
+from routeplanner.api_client import CTPAPIClient
+
+logger = logging.getLogger(__name__)
+api_client = CTPAPIClient()
 
 DIRECT_ROUTE_TOKENS = {'DCT', 'DIRECT'}
+VATSWIM_BATCH_LIMIT = 50
 
 def index(request):
     return render(request, 'routeplotter.html')
@@ -41,6 +47,13 @@ def fir_geojson(request):
         return JsonResponse({"error": str(e)}, status=500)
     
 def waypoints_geojson(request):
+    """
+    Get waypoints from CTP-API in the specified bounding box
+    Falls back to Django DB for legacy support
+    
+    Query parameters:
+    - minLon, minLat, maxLon, maxLat: Bounding box coordinates
+    """
     try:
         min_lon = float(request.GET['minLon'])
         min_lat = float(request.GET['minLat'])
@@ -49,15 +62,64 @@ def waypoints_geojson(request):
     except (KeyError, ValueError):
         return JsonResponse({"type": "FeatureCollection", "features": []}, status=400)
 
-    waypoints = Location.objects.filter(
-        longitude__gte=min_lon, longitude__lte=max_lon,
-        latitude__gte=min_lat,  latitude__lte=max_lat,
-    )
-    features = [{
-        "type": "Feature",
-        "properties": {"identifier": wp.identifier},
-        "geometry": {"type": "Point", "coordinates": [wp.longitude, wp.latitude]},
-    } for wp in waypoints]
+    features = []
+    
+    # Try to get waypoints from CTP-API via route data
+    try:
+        routes_data = api_client.get_routes()
+        
+        if routes_data:
+            # Extract waypoints from all routes
+            waypoint_set = {}  # identifier -> waypoint data
+            
+            for route in routes_data:
+                locations = route.get('locations', [])
+                for location in locations:
+                    identifier = location.get('identifier')
+                    lat = location.get('latitude')
+                    lon = location.get('longitude')
+                    
+                    # Check if within bounding box and not already added
+                    if (min_lon <= lon <= max_lon and 
+                        min_lat <= lat <= max_lat and 
+                        identifier not in waypoint_set):
+                        
+                        waypoint_set[identifier] = {
+                            'identifier': identifier,
+                            'latitude': lat,
+                            'longitude': lon
+                        }
+            
+            # Convert to GeoJSON features
+            features = [{
+                "type": "Feature",
+                "properties": {"identifier": wp['identifier']},
+                "geometry": {"type": "Point", "coordinates": [wp['longitude'], wp['latitude']]},
+            } for wp in waypoint_set.values()]
+            
+            logger.debug(f"Loaded {len(features)} waypoints from CTP-API")
+            return JsonResponse({"type": "FeatureCollection", "features": features})
+    
+    except Exception as e:
+        logger.warning(f"Failed to load waypoints from CTP-API: {str(e)}")
+    
+    # Fallback: Use Django DB waypoints
+    try:
+        waypoints = Location.objects.filter(
+            longitude__gte=min_lon, longitude__lte=max_lon,
+            latitude__gte=min_lat, latitude__lte=max_lat,
+        )
+        features = [{
+            "type": "Feature",
+            "properties": {"identifier": wp.identifier},
+            "geometry": {"type": "Point", "coordinates": [wp.longitude, wp.latitude]},
+        } for wp in waypoints]
+        
+        logger.debug(f"Loaded {len(features)} waypoints from Django DB (fallback)")
+        
+    except Exception as e:
+        logger.error(f"Failed to load waypoints from fallback DB: {str(e)}")
+    
     return JsonResponse({"type": "FeatureCollection", "features": features})
 
 def check_for_oceanic_waypoint(waypoint: str):
@@ -378,6 +440,149 @@ def build_plotting_caches(normalized_lines):
     }
 
 
+def parse_vatswim_route_result(route_payload):
+    route_payload = route_payload or {}
+    normalized_route_string = normalize_route_text(route_payload.get('route_string', ''))
+    waypoints = route_payload.get('waypoints') or []
+    coords = []
+    labels = []
+
+    for waypoint in waypoints:
+        lat = waypoint.get('lat')
+        lon = waypoint.get('lon')
+        if lat is None or lon is None:
+            continue
+        identifier = waypoint.get('fix') or waypoint.get('identifier') or waypoint.get('name') or 'WP'
+        lon_f = float(lon)
+        lat_f = float(lat)
+        coords.append([lon_f, lat_f])
+        labels.append({'identifier': identifier, 'lon': lon_f, 'lat': lat_f})
+
+    return {
+        'route_string': normalized_route_string,
+        'coords': coords,
+        'labels': labels,
+        'unknown': route_payload.get('unknown_tokens') or [],
+        'error': route_payload.get('error', ''),
+    }
+
+
+def resolve_routes_via_vatswim(normalized_lines):
+    endpoint = getattr(settings, 'VATSWIM_ROUTE_RESOLVE_URL', 'https://perti.vatcscc.org/api/swim/v1/routes/resolve')
+    api_key = getattr(settings, 'VATSWIM_API_KEY', '').strip()
+
+    if not endpoint:
+        error = 'Route resolve API URL is not configured.'
+        return [
+            {'route_string': line, 'coords': [], 'labels': [], 'unknown': [], 'error': error}
+            for line in normalized_lines
+        ]
+
+    if not api_key:
+        error = 'VATSWIM_API_KEY is not configured.'
+        return [
+            {'route_string': line, 'coords': [], 'labels': [], 'unknown': [], 'error': error}
+            for line in normalized_lines
+        ]
+
+    headers = {
+        'Content-Type': 'application/json',
+        'X-API-Key': api_key,
+    }
+    resolved = [
+        {'route_string': line, 'coords': [], 'labels': [], 'unknown': [], 'error': ''}
+        for line in normalized_lines
+    ]
+
+    for start in range(0, len(normalized_lines), VATSWIM_BATCH_LIMIT):
+        batch_lines = normalized_lines[start:start + VATSWIM_BATCH_LIMIT]
+        payload = {'routes': [{'route_string': line} for line in batch_lines]}
+
+        try:
+            response = requests.post(endpoint, headers=headers, json=payload, timeout=20)
+            response.raise_for_status()
+            response_json = response.json()
+        except Exception as exc:
+            for idx in range(start, start + len(batch_lines)):
+                resolved[idx] = {
+                    'route_string': normalized_lines[idx],
+                    'coords': [],
+                    'labels': [],
+                    'unknown': [],
+                    'error': f'Resolve API request failed: {exc}',
+                }
+            continue
+
+        data = response_json.get('data') if isinstance(response_json, dict) else {}
+        route_results = data.get('routes') if isinstance(data, dict) else None
+        if not isinstance(route_results, list):
+            for idx in range(start, start + len(batch_lines)):
+                resolved[idx] = {
+                    'route_string': normalized_lines[idx],
+                    'coords': [],
+                    'labels': [],
+                    'unknown': [],
+                    'error': 'Resolve API returned an unexpected response format.',
+                }
+            continue
+
+        if len(route_results) == len(batch_lines):
+            for offset, route_payload in enumerate(route_results):
+                resolved[start + offset] = parse_vatswim_route_result(route_payload)
+            continue
+
+        # Fallback for out-of-order/missing results: map by route_string.
+        by_route_string = {}
+        for route_payload in route_results:
+            if not isinstance(route_payload, dict):
+                continue
+            key = normalize_route_text(route_payload.get('route_string', ''))
+            by_route_string.setdefault(key, []).append(route_payload)
+
+        for offset, line in enumerate(batch_lines):
+            matched = by_route_string.get(line, [])
+            if matched:
+                resolved[start + offset] = parse_vatswim_route_result(matched.pop(0))
+            else:
+                resolved[start + offset] = {
+                    'route_string': line,
+                    'coords': [],
+                    'labels': [],
+                    'unknown': [],
+                    'error': 'Resolve API did not return a result for this route.',
+                }
+
+    return resolved
+
+
+def build_route_metadata(normalized_lines):
+    line_upper_set = {line.upper() for line in normalized_lines if line}
+    route_group_by_line_upper = {}
+    route_color_by_line_upper = {}
+
+    if not line_upper_set:
+        return route_group_by_line_upper, route_color_by_line_upper
+
+    route_candidates = list(
+        Route.objects
+        .annotate(identifier_upper=Upper('identifier'), routestring_upper=Upper('routestring'))
+        .filter(Q(identifier_upper__in=line_upper_set) | Q(routestring_upper__in=line_upper_set))
+        .only('identifier', 'routestring', 'group', 'color')
+    )
+
+    for route in route_candidates:
+        identifier_key = (route.identifier or '').upper()
+        routestring_key = normalize_route_text(route.routestring).upper()
+        if identifier_key and identifier_key not in route_group_by_line_upper:
+            route_group_by_line_upper[identifier_key] = route.group
+            route_color_by_line_upper[identifier_key] = route.color
+        if routestring_key and routestring_key not in route_group_by_line_upper:
+            route_group_by_line_upper[routestring_key] = route.group
+            route_color_by_line_upper[routestring_key] = route.color
+
+    return route_group_by_line_upper, route_color_by_line_upper
+
+
 def plot_route(request):
     if request.method != 'POST':
         return JsonResponse({'error': 'POST required'}, status=405)
@@ -389,96 +594,30 @@ def plot_route(request):
     route_text = data.get('route', '')
     lines = [l.strip() for l in route_text.split('\n') if l.strip()]
     normalized_lines = [normalize_route_text(line) for line in lines]
-    caches = build_plotting_caches(normalized_lines)
-    route_group_by_line_upper = caches['route_group_by_line_upper']
-    route_color_by_line_upper = caches['route_color_by_line_upper']
-    location_candidates_by_upper = caches['location_candidates_by_upper']
-    airway_by_upper = caches['airway_by_upper']
-    airway_waypoints_by_upper = caches['airway_waypoints_by_upper']
-    custom_fix_upper_set = caches['custom_fix_upper_set']
+    route_group_by_line_upper, route_color_by_line_upper = build_route_metadata(normalized_lines)
+
+    resolved_routes = resolve_routes_via_vatswim(normalized_lines)
 
     result = []
-    for normalized_line in normalized_lines:
+    for idx, normalized_line in enumerate(normalized_lines):
         route_group = route_group_by_line_upper.get(normalized_line.upper(), '')
         route_color = route_color_by_line_upper.get(normalized_line.upper(), '')
-        route_tokens = normalized_line.split()
-        
-        resolved = []
-        prev_location = None
-
-        for token in route_tokens:
-            token_clean = token.strip()
-            token_upper = token_clean.upper()
-
-            # ICAO routes may include DCT as a separator for a direct leg.
-            if token_upper in DIRECT_ROUTE_TOKENS:
-                continue
-
-            oceanic = check_for_oceanic_waypoint(token_upper)
-            if oceanic:
-                lat, lon = oceanic
-                resolved.append({'type': 'waypoint', 'identifier': token_upper, 'lon': lon, 'lat': lat, 'location': None})
-                prev_location = None
-                continue
-
-            resolved_item = resolve_token(
-                token_upper,
-                prev_location,
-                location_candidates_by_upper=location_candidates_by_upper,
-                airway_by_upper=airway_by_upper,
-                airway_waypoints_by_upper=airway_waypoints_by_upper,
-            )
-            if resolved_item:
-                if resolved_item['type'] == 'waypoint':
-                    resolved.append({
-                        'type': 'waypoint',
-                        'identifier': resolved_item['identifier'],
-                        'lon': resolved_item['lon'],
-                        'lat': resolved_item['lat'],
-                        'location': resolved_item['waypoint']
-                    })
-                    prev_location = resolved_item['waypoint']
-                else:  # airway
-                    resolved.append({
-                        'type': 'airway',
-                        'identifier': resolved_item['identifier']
-                    })
-                continue
-
-            resolved.append({'type': 'unknown', 'identifier': token_clean})
-
-        final_coords = []
-        final_labels = []
-        for i, item in enumerate(resolved):
-            if item['type'] == 'waypoint':
-                final_coords.append([item['lon'], item['lat']])
-                final_labels.append({
-                    'identifier': item['identifier'],
-                    'lon': item['lon'],
-                    'lat': item['lat'],
-                    'custom_fix': item['identifier'].upper() in custom_fix_upper_set,
-                })
-            elif item['type'] == 'airway':
-                prev_item = next((r for r in reversed(resolved[:i]) if r['type'] == 'waypoint' and r.get('location')), None)
-                next_item = next((r for r in resolved[i + 1:] if r['type'] == 'waypoint' and r.get('location')), None)
-                if prev_item and next_item:
-                    airway_coords = get_airway_coordinates(
-                        item['identifier'],
-                        prev_item['location'],
-                        next_item['location'],
-                        airway_waypoints_by_upper,
-                    )
-                    if airway_coords:
-                        final_coords.extend(airway_coords[1:-1])
-                # If airway exists but cannot be resolved between surrounding waypoints,
-                # keep plotting as direct leg and do not classify it as unknown token.
+        resolved_route = resolved_routes[idx] if idx < len(resolved_routes) else {
+            'route_string': normalized_line,
+            'coords': [],
+            'labels': [],
+            'unknown': [],
+            'error': 'No resolve result available for route.',
+        }
 
         result.append({
             'group': route_group,
             'color': route_color,
-            'coords': final_coords,
-            'labels': final_labels,
-            'unknown': [r['identifier'] for r in resolved if r['type'] == 'unknown'],
+            'route_string': resolved_route['route_string'],
+            'coords': resolved_route['coords'],
+            'labels': resolved_route['labels'],
+            'unknown': resolved_route['unknown'],
+            'error': resolved_route['error'],
         })
 
     return JsonResponse({'routes': result})
