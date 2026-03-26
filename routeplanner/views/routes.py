@@ -1,49 +1,81 @@
-import json
-import re
+"""
+Django views for route management via CTP-API
+Routes are now stored and managed through the .NET API instead of local Django DB
+"""
 
-from django.db import transaction
+import json
+import logging
+from typing import Optional, Dict, Any, List
+
 from django.http import JsonResponse
 from django.shortcuts import render
+from django.views.decorators.http import require_http_methods
 
-from routeplanner.discord import notify_routes_changed
-from routeplanner.models import Route, RouteRevisionEntry, RouteRevisionSet
+from routeplanner.api_client import CTPAPIClient
 from routeplanner.permissions import write_access_required
+
+logger = logging.getLogger(__name__)
+
+# Initialize API client
+api_client = CTPAPIClient()
+
+
+def _route_to_api_format(route_django: Dict) -> Dict:
+    """
+    Convert Django route format to CTP-API format
+    
+    Args:
+        route_django: Route dict from Django form
+        
+    Returns:
+        Route dict for API (RouteSegment format)
+    """
+    return {
+        'identifier': route_django.get('identifier', ''),
+        'routeString': route_django.get('routestring', ''),
+        'group': route_django.get('group', ''),
+        'color': route_django.get('color', ''),
+        'enabled': route_django.get('enabled', True),
+        'tags': (route_django.get('tags', '') or '').split(),
+        'locations': route_django.get('locations', [])  # Waypoints from API
+    }
+
+
+def _api_route_to_django_format(route_api: Dict) -> Dict:
+    """
+    Convert CTP-API route format to Django display format
+    
+    Args:
+        route_api: Route dict from API
+        
+    Returns:
+        Route dict for Django template
+    """
+    return {
+        'pk': route_api.get('identifier', ''),
+        'identifier': route_api.get('identifier', ''),
+        'group': route_api.get('group', ''),
+        'routestring': route_api.get('routeString', ''),
+        'facilities': '',  # Not used in new system
+        'tags': ' '.join(route_api.get('tags', [])),
+        'color': route_api.get('color', ''),
+        'enabled': route_api.get('enabled', True),
+        'waypoints': route_api.get('locations', []),  # Include waypoints for display
+    }
 
 
 def _sorted_routes_queryset():
-    return Route.objects.order_by('group', 'identifier')
-
-
-def _latest_revision_number():
-    latest_revision = RouteRevisionSet.objects.order_by('-number').first()
-    return latest_revision.number if latest_revision else 0
-
-
-def _create_revision_snapshot(routes_queryset):
-    latest_revision = RouteRevisionSet.objects.select_for_update().order_by('-number').first()
-    next_revision_number = (latest_revision.number if latest_revision else 0) + 1
-    revision = RouteRevisionSet.objects.create(number=next_revision_number)
-    RouteRevisionEntry.objects.bulk_create([
-        RouteRevisionEntry(
-            revision=revision,
-            identifier=route.identifier,
-            group=route.group,
-            routestring=route.routestring,
-            facilities=route.facilities,
-            tags=route.tags,
-            color=route.color,
-            enabled=route.enabled,
-        )
-        for route in routes_queryset
-    ])
-    return revision.number
+    """Legacy - not used with API"""
+    pass
 
 
 def _normalize_token_text(value):
+    """Normalize whitespace and separators in token text"""
     return ' '.join((value or '').replace(',', ' ').replace(';', ' ').split())
 
 
 def _coerce_bool(value, default=None):
+    """Convert value to boolean"""
     if value is None:
         return default
     if isinstance(value, bool):
@@ -56,254 +88,183 @@ def _coerce_bool(value, default=None):
             return False
         return None
     if isinstance(value, (int, float)):
-        if value == 1:
-            return True
-        if value == 0:
-            return False
+        return value == 1 if value != 0 else False
     return None
 
 
-def _serialize_route(route):
-    return {
-        'pk': route.identifier,
-        'identifier': route.identifier,
-        'group': route.group,
-        'routestring': route.routestring,
-        'facilities': route.facilities,
-        'tags': route.tags,
-        'color': route.color,
-        'enabled': route.enabled,
-    }
-
-
-def _validate_route_payload(route_data, require_original=False, require_current_values=True):
-    identifier = (route_data.get('identifier') or '').strip().upper()
-    group = (route_data.get('group') or '').strip()
-    routestring = _normalize_token_text(route_data.get('routestring'))
-    facilities = _normalize_token_text(route_data.get('facilities'))
-    tags = _normalize_token_text(route_data.get('tags'))
-    color = (route_data.get('color') or '').strip()
-    enabled = _coerce_bool(route_data.get('enabled'), default=True)
-    original = route_data.get('original') or {}
-
-    if not isinstance(enabled, bool):
-        return None, 'Enabled must be true or false.'
-
-    if require_current_values and not identifier:
-        return None, 'Identifier is required.'
-    if require_current_values and not routestring:
-        return None, 'Route string is required.'
-    if require_current_values and (',' in routestring or ';' in routestring):
-        return None, 'Commas and semicolons are not allowed in route strings.'
-    if require_current_values and (',' in facilities or ';' in facilities):
-        return None, 'Commas and semicolons are not allowed in facilities.'
-    if require_current_values and (',' in tags or ';' in tags):
-        return None, 'Commas and semicolons are not allowed in tags.'
-    if color and not re.fullmatch(r'#[0-9a-fA-F]{6}', color):
-        return None, 'Color must be a valid hex color (e.g. #ff0000) or empty.'
-
-    validated = {
-        'pk': (route_data.get('pk') or '').strip(),
-        'identifier': identifier,
-        'group': group,
-        'routestring': routestring,
-        'facilities': facilities,
-        'tags': tags,
-        'color': color,
-        'enabled': enabled,
-        'original': {
-            'pk': (original.get('pk') or '').strip(),
-            'group': (original.get('group') or '').strip(),
-            'routestring': _normalize_token_text(original.get('routestring')),
-            'facilities': _normalize_token_text(original.get('facilities')),
-            'tags': _normalize_token_text(original.get('tags')),
-            'color': (original.get('color') or '').strip(),
-            'enabled': _coerce_bool(original.get('enabled'), default=True),
-        },
-    }
-
-    if validated['original']['enabled'] is None:
-        return None, 'Original enabled value must be true or false.'
-
-    if require_original and not validated['original']['pk']:
-        return None, 'Original route reference is missing.'
-
-    return validated, None
-
-
+@require_http_methods(["GET"])
 def routes(request):
-    route_list = _sorted_routes_queryset()
-    return render(request, 'routes.html', {
-        'routes': route_list,
-        'current_revision_number': _latest_revision_number(),
-    })
+    """
+    Display all routes stored in CTP-API
+    Routes are now fetched from the REST API instead of local DB
+    """
+    try:
+        if not api_client.is_available():
+            logger.warning("CTP-API not available, rendering empty routes")
+            return render(request, 'routes.html', {
+                'routes': [],
+                'error': 'CTP-API is currently unavailable. Some features may be limited.',
+                'current_revision_number': 0,
+            })
+
+        # Fetch routes from API
+        routes_data = api_client.get_routes()
+        
+        if routes_data is None:
+            logger.error("Failed to fetch routes from API")
+            return render(request, 'routes.html', {
+                'routes': [],
+                'error': 'Failed to load routes from CTP-API',
+                'current_revision_number': 0,
+            })
+
+        # Convert API format to Django template format
+        routes_list = [_api_route_to_django_format(r) for r in routes_data]
+        routes_list.sort(key=lambda r: (r['group'], r['identifier']))
+
+        return render(request, 'routes.html', {
+            'routes': routes_list,
+            'current_revision_number': 0,  # Revision tracking handled by API
+            'api_source': True,
+        })
+
+    except Exception as e:
+        logger.exception("Error in routes view")
+        return render(request, 'routes.html', {
+            'routes': [],
+            'error': f'Error loading routes: {str(e)}',
+            'current_revision_number': 0,
+        })
 
 
 @write_access_required
-@transaction.atomic
-def route_delete(request, identifier):
-    if request.method != 'POST':
-        return JsonResponse({'error': 'Method not allowed'}, status=405)
-
-    try:
-        payload = json.loads(request.body or '{}')
-    except (json.JSONDecodeError, ValueError):
-        return JsonResponse({'error': 'Invalid JSON'}, status=400)
-
-    original = payload.get('original') or {}
-    original_pk = (original.get('pk') or '').strip()
-    original_routestring = (original.get('routestring') or '').strip()
-    original_group = (original.get('group') or '').strip()
-    original_facilities = _normalize_token_text(original.get('facilities'))
-    original_tags = _normalize_token_text(original.get('tags'))
-    original_color = (original.get('color') or '').strip()
-    original_enabled = _coerce_bool(original.get('enabled'), default=True)
-
-    if not isinstance(original_enabled, bool):
-        return JsonResponse({'error': 'Original enabled value must be true or false.'}, status=400)
-
-    if not original_pk or original_pk != identifier:
-        return JsonResponse({'error': 'Original route reference is missing.'}, status=400)
-
-    try:
-        route = Route.objects.select_for_update().get(identifier=identifier)
-    except Route.DoesNotExist:
-        # Already gone — treat as success
-        return JsonResponse({'success': True})
-
-    if (
-        route.routestring != _normalize_token_text(original_routestring)
-        or route.group != original_group
-        or route.facilities != original_facilities
-        or route.tags != original_tags
-        or route.color != original_color
-        or route.enabled != original_enabled
-    ):
-        return JsonResponse({'error': f"Conflict: route '{original_pk}' was changed by another user."}, status=409)
-
-    route.delete()
-    notify_routes_changed(f"deleted '{identifier}'")
-    return JsonResponse({'success': True})
-
-
-@write_access_required
-@transaction.atomic
+@require_http_methods(["POST"])
 def routes_save(request):
-    if request.method != 'POST':
-        return JsonResponse({'error': 'Method not allowed'}, status=405)
-
+    """
+    Save route changes to CTP-API
+    
+    Expects JSON payload with:
+    {
+        "updates": [
+            {
+                "pk": "OLD_IDENTIFIER",
+                "identifier": "NEW_IDENTIFIER",
+                "routestring": "ROUTE STRING",
+                "group": "GROUP",
+                "tags": "TAG1 TAG2",
+                "color": "#ff0000",
+                "enabled": true,
+                "locations": [{identifier, latitude, longitude, maximumAircraftPerHour}, ...]
+            }
+        ],
+        "deletes": [...]
+    }
+    """
     try:
         payload = json.loads(request.body or '{}')
-    except (json.JSONDecodeError, ValueError):
+    except json.JSONDecodeError:
         return JsonResponse({'error': 'Invalid JSON'}, status=400)
 
     raw_updates = payload.get('updates', [])
     raw_deletes = payload.get('deletes', [])
 
-    updates = []
-    for route_data in raw_updates:
-        validated, error = _validate_route_payload(route_data)
-        if error:
-            return JsonResponse({'error': error}, status=400)
-        updates.append(validated)
-
-    deletes = []
-    for route_data in raw_deletes:
-        validated, error = _validate_route_payload(route_data, require_original=True, require_current_values=False)
-        if error:
-            return JsonResponse({'error': error}, status=400)
-        deletes.append(validated)
-
-    if not updates and not deletes:
+    if not raw_updates and not raw_deletes:
         return JsonResponse({'success': True, 'message': 'No changes to save.'})
 
-    existing_routes = list(Route.objects.select_for_update().all())
-    routes_by_identifier = {route.identifier: route for route in existing_routes}
-    reserved_identifiers = {route.identifier for route in existing_routes}
+    try:
+        # Handle deletions
+        for route_data in raw_deletes:
+            identifier = (route_data.get('pk') or '').strip()
+            if not identifier:
+                return JsonResponse({'error': 'Delete identifier is required'}, status=400)
 
-    for route_data in deletes:
-        original = route_data['original']
-        route = routes_by_identifier.get(original['pk'])
-        if route is None:
-            return JsonResponse({'error': f"Conflict: route '{original['pk']}' no longer exists."}, status=409)
-        if (
-            route.routestring != original['routestring']
-            or route.group != original['group']
-            or route.facilities != original['facilities']
-            or route.tags != original['tags']
-            or route.color != original['color']
-            or route.enabled != original['enabled']
-        ):
-            return JsonResponse({'error': f"Conflict: route '{original['pk']}' was changed by another user."}, status=409)
+            result = api_client.delete_route(identifier)
+            if result is None:
+                return JsonResponse({'error': f"Failed to delete route '{identifier}'"}, status=500)
 
-        route.delete()
-        reserved_identifiers.discard(route.identifier)
-        routes_by_identifier.pop(route.identifier, None)
+        # Handle updates/creates
+        saved_routes = []
+        for route_data in raw_updates:
+            identifier = (route_data.get('identifier') or '').strip().upper()
+            routestring = _normalize_token_text(route_data.get('routestring'))
+            group = (route_data.get('group') or '').strip()
+            tags = _normalize_token_text(route_data.get('tags') or '')
+            color = (route_data.get('color') or '').strip()
+            enabled = _coerce_bool(route_data.get('enabled'), default=True)
+            locations = route_data.get('locations', [])
 
-    saved_routes = []
-    for route_data in updates:
-        current_identifier = route_data['pk']
-        original = route_data['original']
+            # Validate
+            if not identifier:
+                return JsonResponse({'error': 'Route identifier is required'}, status=400)
+            if not routestring:
+                return JsonResponse({'error': 'Route string is required'}, status=400)
+            if not isinstance(enabled, bool):
+                return JsonResponse({'error': 'Enabled must be true or false'}, status=400)
 
-        if current_identifier:
-            route = routes_by_identifier.get(current_identifier)
-            if route is None:
-                return JsonResponse({'error': f"Conflict: route '{current_identifier}' no longer exists."}, status=409)
-            if (
-                route.routestring != original['routestring']
-                or route.group != original['group']
-                or route.facilities != original['facilities']
-                or route.tags != original['tags']
-                or route.color != original['color']
-                or route.enabled != original['enabled']
-            ):
-                return JsonResponse({'error': f"Conflict: route '{current_identifier}' was changed by another user."}, status=409)
-        else:
-            route = None
+            # Prepare API payload
+            api_route = {
+                'identifier': identifier,
+                'routeString': routestring,
+                'group': group,
+                'color': color,
+                'enabled': enabled,
+                'tags': tags.split() if tags else [],
+                'locations': locations,
+            }
 
-        new_identifier = route_data['identifier']
-        taken = reserved_identifiers - ({current_identifier} if current_identifier else set())
-        if new_identifier in taken:
-            return JsonResponse({'error': f"Identifier '{new_identifier}' is already in use."}, status=400)
+            # Save to API
+            result = api_client.save_route(api_route)
+            if result is None:
+                return JsonResponse({'error': f"Failed to save route '{identifier}'"}, status=500)
 
-        if route is None:
-            route = Route.objects.create(
-                identifier=new_identifier,
-                group=route_data['group'],
-                routestring=route_data['routestring'],
-                facilities=route_data['facilities'],
-                tags=route_data['tags'],
-                color=route_data['color'],
-                enabled=route_data['enabled'],
+            saved_routes.append({
+                'pk': identifier,
+                'identifier': identifier,
+                'group': group,
+                'routestring': routestring,
+                'tags': tags,
+                'color': color,
+                'enabled': enabled,
+            })
+
+        return JsonResponse({
+            'success': True,
+            'saved_routes': saved_routes,
+            'revision_number': 0,  # Revisions handled by API
+            'message': f'Saved {len(saved_routes)} route(s)'
+        })
+
+    except Exception as e:
+        logger.exception("Error in routes_save")
+        return JsonResponse({'error': f'Error saving routes: {str(e)}'}, status=500)
+
+
+@write_access_required
+@require_http_methods(["POST"])
+def route_delete(request, identifier):
+    """
+    Delete a specific route from CTP-API
+    
+    Expects JSON payload with original route values for conflict detection
+    """
+    try:
+        payload = json.loads(request.body or '{}')
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    identifier = identifier.strip().upper()
+
+    try:
+        result = api_client.delete_route(identifier)
+        
+        if result is None:
+            return JsonResponse(
+                {'error': f"Route '{identifier}' not found or already deleted"},
+                status=404
             )
-        elif new_identifier == route.identifier:
-            route.group = route_data['group']
-            route.routestring = route_data['routestring']
-            route.facilities = route_data['facilities']
-            route.tags = route_data['tags']
-            route.color = route_data['color']
-            route.enabled = route_data['enabled']
-            route.save(update_fields=['group', 'routestring', 'facilities', 'tags', 'color', 'enabled'])
-        else:
-            route.delete()
-            reserved_identifiers.discard(current_identifier)
-            routes_by_identifier.pop(current_identifier, None)
-            route = Route.objects.create(
-                identifier=new_identifier,
-                group=route_data['group'],
-                routestring=route_data['routestring'],
-                facilities=route_data['facilities'],
-                tags=route_data['tags'],
-                color=route_data['color'],
-                enabled=route_data['enabled'],
-            )
 
-        reserved_identifiers.add(route.identifier)
-        routes_by_identifier[route.identifier] = route
-        saved_routes.append(_serialize_route(route))
+        return JsonResponse({'success': True})
 
-    revision_number = _create_revision_snapshot(_sorted_routes_queryset())
-
-    if saved_routes:
-        notify_routes_changed(f"saved {len(saved_routes)} route(s)")
-    return JsonResponse({'success': True, 'saved_routes': saved_routes, 'revision_number': revision_number})
+    except Exception as e:
+        logger.exception(f"Error deleting route {identifier}")
+        return JsonResponse({'error': f'Error deleting route: {str(e)}'}, status=500)

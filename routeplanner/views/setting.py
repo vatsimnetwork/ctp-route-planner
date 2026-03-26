@@ -5,12 +5,16 @@ import logging
 from django.conf import settings
 from django.core.paginator import Paginator
 from django.db import transaction
+from django.http import JsonResponse
 from django.shortcuts import redirect, render
 
-from routeplanner.models import Location, Airway, AirwayWaypoint
+from routeplanner.api_client import CTPAPIClient
+from routeplanner.models import Location, Airway, AirwayWaypoint, Route
 from routeplanner.permissions import is_administrator
+from routeplanner.views.routeplotter import normalize_route_text, resolve_routes_via_vatswim
 
 logger = logging.getLogger(__name__)
+api_client = CTPAPIClient()
 
 @is_administrator
 def waypoint_settings(request):
@@ -189,3 +193,103 @@ def delete_all_airways(request):
     if request.method == 'POST':
         Airway.objects.all().delete()
     return redirect('airways_settings')
+
+
+def _build_api_locations_from_labels(labels):
+    locations = []
+    seen = set()
+    for label in labels or []:
+        identifier = (label.get('identifier') or '').strip().upper()
+        lat = label.get('lat')
+        lon = label.get('lon')
+        if not identifier or lat is None or lon is None:
+            continue
+        key = (identifier, float(lat), float(lon))
+        if key in seen:
+            continue
+        seen.add(key)
+        locations.append({
+            'identifier': identifier,
+            'latitude': float(lat),
+            'longitude': float(lon),
+            'maximumAircraftPerHour': 20,
+        })
+    return locations
+
+
+@is_administrator
+def migrate_old_routes(request):
+    if request.method == 'GET':
+        return render(request, 'migrate_old_routes.html')
+
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+    old_routes = list(Route.objects.all().order_by('group', 'identifier'))
+    if not old_routes:
+        return JsonResponse({'success': True, 'message': 'No old routes found to migrate.', 'stats': {'total': 0, 'migrated': 0, 'failed': 0}, 'errors': []})
+
+    normalized_lines = [normalize_route_text(route.routestring) for route in old_routes]
+    resolved_routes = resolve_routes_via_vatswim(normalized_lines)
+
+    payload = []
+    errors = []
+
+    for idx, route in enumerate(old_routes):
+        resolved = resolved_routes[idx] if idx < len(resolved_routes) else {}
+        resolve_error = (resolved or {}).get('error') or ''
+        if resolve_error:
+            errors.append({
+                'identifier': route.identifier,
+                'error': resolve_error,
+            })
+            continue
+
+        locations = _build_api_locations_from_labels((resolved or {}).get('labels'))
+        if len(locations) < 2:
+            errors.append({
+                'identifier': route.identifier,
+                'error': 'Parsed route has fewer than 2 valid waypoints.',
+            })
+            continue
+
+        payload.append({
+            'identifier': (route.identifier or '').strip().upper(),
+            'routeString': normalize_route_text(route.routestring),
+            'routeSegmentGroup': (route.group or '').strip(),
+            'color': (route.color or '').strip(),
+            'enabled': bool(route.enabled),
+            'routeSegmentTags': [tag for tag in (route.tags or '').split() if tag],
+            'locations': locations,
+        })
+
+    if not payload:
+        return JsonResponse({
+            'success': False,
+            'message': 'No routes could be prepared for migration.',
+            'stats': {'total': len(old_routes), 'migrated': 0, 'failed': len(errors)},
+            'errors': errors,
+        }, status=400)
+
+    result = api_client.save_routes_batch(payload)
+    if result is None:
+        return JsonResponse({
+            'success': False,
+            'message': 'CTP-API batch save failed.',
+            'details': api_client.last_error,
+            'stats': {'total': len(old_routes), 'migrated': 0, 'failed': len(old_routes)},
+            'errors': errors,
+        }, status=502)
+
+    migrated_count = len(payload)
+    return JsonResponse({
+        'success': True,
+        'message': f'Migrated {migrated_count} route(s) to CTP-API.',
+        'stats': {
+            'total': len(old_routes),
+            'migrated': migrated_count,
+            'failed': len(errors),
+        },
+        'errors': errors,
+        'api_result': result,
+    })

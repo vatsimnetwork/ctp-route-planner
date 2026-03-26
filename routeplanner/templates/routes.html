@@ -337,7 +337,7 @@
                     <label for="toggle-waypoints">Waypoints</label>
                 </div>
                 <div class="form-check">
-                    <input type="checkbox" id="toggle-user-colors">
+                    <input type="checkbox" id="toggle-user-colors" checked>
                     <label for="toggle-user-colors">User Route Colors</label>
                 </div>
                 <div class="form-check">
@@ -723,6 +723,14 @@ function plotVisibleRoutesOnMap() {
     }
 
     const visibleRoutes = collectVisibleRoutes();
+    const colorQueueByRouteString = new Map();
+    visibleRoutes.forEach(route => {
+        const key = normalizeTokenField(route.routestring || '').toUpperCase();
+        if (!colorQueueByRouteString.has(key)) {
+            colorQueueByRouteString.set(key, []);
+        }
+        colorQueueByRouteString.get(key).push(route.color || '');
+    });
     clearRoutePlot();
 
     if (!visibleRoutes.length) {
@@ -748,11 +756,14 @@ function plotVisibleRoutesOnMap() {
     .then(data => {
         const unknownTokens = new Set();
         (data.routes || []).forEach((route, i) => {
+            const routeKey = normalizeTokenField(route.route_string || '').toUpperCase();
+            const colorQueue = colorQueueByRouteString.get(routeKey) || [];
+            const mappedColor = (route.color || '') || (colorQueue.length ? colorQueue.shift() : '') || (visibleRoutes[i]?.color || '');
             if (route.coords && route.coords.length > 1) {
                 const lineFeature = new ol.Feature({
                     geometry: new ol.geom.LineString(route.coords.map(c => ol.proj.fromLonLat(c))),
                     group: (route.group || '').trim().toUpperCase(),
-                    userColor: visibleRoutes[i]?.color || '',
+                    userColor: mappedColor,
                 });
                 routeLineSource.addFeature(lineFeature);
             }
