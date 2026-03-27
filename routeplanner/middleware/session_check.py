@@ -9,6 +9,9 @@ class SessionCheckMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
+        if request.path.startswith('/api/'):
+            return self.get_response(request)
+
         session_key = request.COOKIES.get('session_id')
 
         request.is_session_valid = False
