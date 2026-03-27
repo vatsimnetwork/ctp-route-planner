@@ -202,9 +202,30 @@
             grid-template-columns: 1fr;
         }
     }
+
+    input:disabled,
+    textarea:disabled,
+    .form-control:disabled {
+        background-color: #f5f5f5;
+        color: #6c757d;
+        cursor: not-allowed;
+        opacity: 0.85;
+    }
+
+    html[data-theme='dark'] input:disabled,
+    html[data-theme='dark'] textarea:disabled,
+    html[data-theme='dark'] .form-control:disabled {
+        background-color: #2d3748;
+        color: #a0aec0;
+    }
+
+    /* Hide action buttons if no write access */
+    .routes-page[data-write-access="false"] #routes-actions {
+        display: none !important;
+    }
 </style>
 
-<div class="container-fluid routes-page">
+<div class="container-fluid routes-page" data-write-access="{{ has_write_access|yesno:'true,false' }}">
     <div class="routes-header mb-2">
         <h1 class="mb-0">Routes</h1>
         <div class="revision-badge">Revision set <strong id="current-revision-number">{{ current_revision_number }}</strong></div>
@@ -261,22 +282,22 @@
                         data-original-enabled="{{ route.enabled|yesno:'true,false' }}"
                         data-is-new="false"
                     >
-                        <td><input type="text" class="form-control form-control-sm route-identifier-input" name="identifier" value="{{ route.identifier }}"></td>
-                        <td><input type="text" class="form-control form-control-sm" name="group" value="{{ route.group }}"></td>
+                        <td><input type="text" class="form-control form-control-sm route-identifier-input" name="identifier" value="{{ route.identifier }}" {% if not has_write_access %}disabled{% endif %}></td>
+                        <td><input type="text" class="form-control form-control-sm" name="group" value="{{ route.group }}" {% if not has_write_access %}disabled{% endif %}></td>
                         <td>
                             <div class="route-color-wrap" data-active="{{ route.color|yesno:'true,false' }}">
-                                <input type="color" name="color" class="route-color-input" value="{{ route.color|default:'#38bdf8' }}" title="Custom route color">
-                                <button type="button" class="route-color-clear" title="Clear custom color" onclick="clearRouteColor(this)">×</button>
+                                <input type="color" name="color" class="route-color-input" value="{{ route.color|default:'#38bdf8' }}" title="Custom route color" {% if not has_write_access %}disabled{% endif %}>
+                                <button type="button" class="route-color-clear" title="Clear custom color" onclick="clearRouteColor(this)" {% if not has_write_access %}disabled style="display:none;"{% endif %}>×</button>
                             </div>
                         </td>
                         <td class="route-enabled-cell">
-                            <input type="checkbox" name="enabled" {{ route.enabled|yesno:'checked,' }}>
+                            <input type="checkbox" name="enabled" {{ route.enabled|yesno:'checked,' }} {% if not has_write_access %}disabled{% endif %}>
                         </td>
-                        <td><textarea class="form-control form-control-sm route-string-input" name="routestring" rows="1">{{ route.routestring }}</textarea></td>
-                        <td><input type="text" class="form-control form-control-sm" name="facilities" value="{{ route.facilities }}"></td>
-                        <td><input type="text" class="form-control form-control-sm" name="tags" value="{{ route.tags }}"></td>
+                        <td><textarea class="form-control form-control-sm route-string-input" name="routestring" rows="1" {% if not has_write_access %}disabled{% endif %}>{{ route.routestring }}</textarea></td>
+                        <td><input type="text" class="form-control form-control-sm" name="facilities" value="{{ route.facilities }}" {% if not has_write_access %}disabled{% endif %}></td>
+                        <td><input type="text" class="form-control form-control-sm" name="tags" value="{{ route.tags }}" {% if not has_write_access %}disabled{% endif %}></td>
                         <td>
-                            <button type="button" class="btn btn-danger btn-sm" onclick="deleteRow(this)">Delete</button>
+                            <button type="button" class="btn btn-danger btn-sm" onclick="deleteRow(this)" {% if not has_write_access %}disabled style="display:none;"{% endif %}>Delete</button>
                         </td>
                     </tr>
                     {% endif %}
@@ -300,22 +321,22 @@
                         data-original-enabled="{{ route.enabled|yesno:'true,false' }}"
                         data-is-new="false"
                     >
-                        <td><input type="text" class="form-control form-control-sm route-identifier-input" name="identifier" value="{{ route.identifier }}"></td>
-                        <td><input type="text" class="form-control form-control-sm" name="group" value="{{ route.group }}"></td>
+                        <td><input type="text" class="form-control form-control-sm route-identifier-input" name="identifier" value="{{ route.identifier }}" {% if not has_write_access %}disabled{% endif %}></td>
+                        <td><input type="text" class="form-control form-control-sm" name="group" value="{{ route.group }}" {% if not has_write_access %}disabled{% endif %}></td>
                         <td>
                             <div class="route-color-wrap" data-active="{{ route.color|yesno:'true,false' }}">
-                                <input type="color" name="color" class="route-color-input" value="{{ route.color|default:'#38bdf8' }}" title="Custom route color">
-                                <button type="button" class="route-color-clear" title="Clear custom color" onclick="clearRouteColor(this)">×</button>
+                                <input type="color" name="color" class="route-color-input" value="{{ route.color|default:'#38bdf8' }}" title="Custom route color" {% if not has_write_access %}disabled{% endif %}>
+                                <button type="button" class="route-color-clear" title="Clear custom color" onclick="clearRouteColor(this)" {% if not has_write_access %}disabled style="display:none;"{% endif %}>×</button>
                             </div>
                         </td>
                         <td class="route-enabled-cell">
-                            <input type="checkbox" name="enabled" {{ route.enabled|yesno:'checked,' }}>
+                            <input type="checkbox" name="enabled" {{ route.enabled|yesno:'checked,' }} {% if not has_write_access %}disabled{% endif %}>
                         </td>
-                        <td><textarea class="form-control form-control-sm route-string-input" name="routestring" rows="1">{{ route.routestring }}</textarea></td>
-                        <td><input type="text" class="form-control form-control-sm" name="facilities" value="{{ route.facilities }}"></td>
-                        <td><input type="text" class="form-control form-control-sm" name="tags" value="{{ route.tags }}"></td>
+                        <td><textarea class="form-control form-control-sm route-string-input" name="routestring" rows="1" {% if not has_write_access %}disabled{% endif %}>{{ route.routestring }}</textarea></td>
+                        <td><input type="text" class="form-control form-control-sm" name="facilities" value="{{ route.facilities }}" {% if not has_write_access %}disabled{% endif %}></td>
+                        <td><input type="text" class="form-control form-control-sm" name="tags" value="{{ route.tags }}" {% if not has_write_access %}disabled{% endif %}></td>
                         <td>
-                            <button type="button" class="btn btn-danger btn-sm" onclick="deleteRow(this)">Delete</button>
+                            <button type="button" class="btn btn-danger btn-sm" onclick="deleteRow(this)" {% if not has_write_access %}disabled style="display:none;"{% endif %}>Delete</button>
                         </td>
                     </tr>
                     {% endif %}
@@ -366,6 +387,7 @@ const GET_WAYPOINTS_BASE_URL = '{% url "waypoints_geojson" %}';
 const GET_HIGHLIGHTED_WAYPOINTS_URL = '{% url "highlighted_waypoints_geojson" %}';
 const ROUTES_DRAFT_STORAGE_KEY = 'ctp-routes-draft-v2';
 const ROUTES_UI_STORAGE_KEY = 'ctp-routes-ui-v1';
+const HAS_WRITE_ACCESS = {{ has_write_access|yesno:'true,false' }};
 let routePlotRequestController = null;
 let routePlotDebounceTimer = null;
 let isApplyingStoredDraft = false;
@@ -418,22 +440,26 @@ function createRowElement(rowState) {
     tr.dataset.originalColor = rowState.originalColor || '';
     tr.dataset.originalEnabled = rowState.originalEnabled === false ? 'false' : 'true';
     tr.dataset.isNew = rowState.isNew ? 'true' : 'false';
+    
+    const disabledAttr = HAS_WRITE_ACCESS ? '' : 'disabled';
+    const deleteButtonDisplay = HAS_WRITE_ACCESS ? '' : 'style="display:none;"';
+    
     tr.innerHTML = `
-        <td><input type="text" class="form-control form-control-sm route-identifier-input" name="identifier" value=""></td>
-        <td><input type="text" class="form-control form-control-sm" name="group" value=""></td>
+        <td><input type="text" class="form-control form-control-sm route-identifier-input" name="identifier" value="" ${disabledAttr}></td>
+        <td><input type="text" class="form-control form-control-sm" name="group" value="" ${disabledAttr}></td>
         <td>
             <div class="route-color-wrap" data-active="false">
-                <input type="color" name="color" class="route-color-input" value="#38bdf8" title="Custom route color">
-                <button type="button" class="route-color-clear" title="Clear custom color" onclick="clearRouteColor(this)">×</button>
+                <input type="color" name="color" class="route-color-input" value="#38bdf8" title="Custom route color" ${disabledAttr}>
+                <button type="button" class="route-color-clear" title="Clear custom color" onclick="clearRouteColor(this)" ${disabledAttr} style="display:none;">×</button>
             </div>
         </td>
         <td class="route-enabled-cell">
-            <input type="checkbox" name="enabled" checked>
+            <input type="checkbox" name="enabled" checked ${disabledAttr}>
         </td>
-        <td><textarea class="form-control form-control-sm route-string-input" name="routestring" rows="1"></textarea></td>
-        <td><input type="text" class="form-control form-control-sm" name="facilities" value=""></td>
-        <td><input type="text" class="form-control form-control-sm" name="tags" value=""></td>
-        <td><button type="button" class="btn btn-danger btn-sm" onclick="deleteRow(this)">Delete</button></td>
+        <td><textarea class="form-control form-control-sm route-string-input" name="routestring" rows="1" ${disabledAttr}></textarea></td>
+        <td><input type="text" class="form-control form-control-sm" name="facilities" value="" ${disabledAttr}></td>
+        <td><input type="text" class="form-control form-control-sm" name="tags" value="" ${disabledAttr}></td>
+        <td><button type="button" class="btn btn-danger btn-sm" onclick="deleteRow(this)" ${deleteButtonDisplay}>Delete</button></td>
     `;
 
     tr.querySelector('input[name="identifier"]').value = rowState.identifier || '';
@@ -475,6 +501,10 @@ function isRowCompletelyEmpty(row) {
 }
 
 function ensureTrailingEmptyRow() {
+    if (!HAS_WRITE_ACCESS) {
+        return;
+    }
+    
     const tbody = document.getElementById('routes-enabled-tbody');
     const rows = getRouteRows().filter(row => row.parentElement?.id === 'routes-enabled-tbody');
 
@@ -993,6 +1023,10 @@ function saveAll() {
 const routesTableWrap = document.querySelector('.routes-table-wrap');
 
 routesTableWrap.addEventListener('input', event => {
+    if (!HAS_WRITE_ACCESS) {
+        return;
+    }
+    
     if (!event.target.closest('tr.route-row')) {
         return;
     }
@@ -1025,6 +1059,10 @@ routesTableWrap.addEventListener('input', event => {
 });
 
 routesTableWrap.addEventListener('change', event => {
+    if (!HAS_WRITE_ACCESS) {
+        return;
+    }
+    
     if (!event.target.closest('tr.route-row')) {
         return;
     }
@@ -1178,7 +1216,9 @@ routesTableWrap.addEventListener('keydown', event => {
 });
 
 restoreRoutesDraftFromStorage();
-ensureTrailingEmptyRow();
+if (HAS_WRITE_ACCESS) {
+    ensureTrailingEmptyRow();
+}
 restoreUiStateFromSessionStorage();
 window.addEventListener('storage', event => {
     if (event.key === ROUTES_DRAFT_STORAGE_KEY) {

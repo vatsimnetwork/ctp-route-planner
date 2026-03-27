@@ -132,10 +132,14 @@ def _validate_route_payload(route_data, require_original=False, require_current_
 
 
 def routes(request):
+    from routeplanner.permissions import WRITE_ROLES
+    
     route_list = _sorted_routes_queryset()
+    has_write_access = bool(WRITE_ROLES.intersection(request.user_roles))
     return render(request, 'routes.html', {
         'routes': route_list,
         'current_revision_number': _latest_revision_number(),
+        'has_write_access': has_write_access,
     })
 
 
