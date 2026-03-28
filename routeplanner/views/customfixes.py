@@ -1,21 +1,29 @@
 import json
+import logging
 
 from django.http import JsonResponse
-from django.shortcuts import render, redirect
-from django.views.decorators.http import require_POST
+from django.shortcuts import render
 
-from routeplanner.models import CustomFix
+from routeplanner import api_client
 from routeplanner.permissions import write_access_required
+
+logger = logging.getLogger(__name__)
 
 
 def custom_fixes(request):
-    fixes = CustomFix.objects.all()
+    try:
+        fixes = api_client.list_custom_fixes()
+    except Exception:
+        logger.exception("Failed to fetch custom fixes from API")
+        fixes = []
     return render(request, 'customfixes.html', {'fixes': fixes})
 
 
 @write_access_required
-@require_POST
 def custom_fix_create(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
     try:
         data = json.loads(request.body)
     except (json.JSONDecodeError, ValueError):
@@ -40,25 +48,31 @@ def custom_fix_create(request):
     if not (-180 <= longitude <= 180):
         return JsonResponse({'error': 'Longitude must be between -180 and 180'}, status=400)
 
-    fix, created = CustomFix.objects.update_or_create(
-        identifier=identifier,
-        defaults={'latitude': latitude, 'longitude': longitude, 'note': note},
-    )
+    try:
+        result = api_client.upsert_custom_fix(identifier, latitude, longitude, note)
+    except Exception:
+        logger.exception("Failed to upsert custom fix via API")
+        return JsonResponse({'error': 'Failed to save to data API'}, status=503)
 
     return JsonResponse({
-        'id': fix.id,
-        'identifier': fix.identifier,
-        'latitude': fix.latitude,
-        'longitude': fix.longitude,
-        'note': fix.note,
-        'created': created,
-    }, status=201 if created else 200)
+        'id': result.get('id', 0),
+        'identifier': result.get('identifier', identifier),
+        'latitude': result.get('latitude', latitude),
+        'longitude': result.get('longitude', longitude),
+        'note': result.get('note', note),
+        'created': True,
+    }, status=201)
 
 
 @write_access_required
-@require_POST
 def custom_fix_delete(request, identifier):
-    deleted, _ = CustomFix.objects.filter(identifier=identifier.upper()).delete()
-    if not deleted:
-        return JsonResponse({'error': 'Not found'}, status=404)
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+    try:
+        api_client.delete_custom_fix(identifier.upper())
+    except Exception:
+        logger.exception("Failed to delete custom fix via API")
+        return JsonResponse({'error': 'Failed to delete from data API'}, status=503)
+
     return JsonResponse({'deleted': identifier.upper()})

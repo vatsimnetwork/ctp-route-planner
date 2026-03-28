@@ -1,13 +1,16 @@
 import json
+import logging
 import re
 import requests
 from django.shortcuts import render
 from django.http import JsonResponse
 from django.conf import settings
 from django.core.cache import cache
-from django.db.models import Q
 from django.db.models.functions import Upper
-from routeplanner.models import Location, Airway, AirwayWaypoint, Route, CustomFix
+from routeplanner.models import Location, Airway, AirwayWaypoint
+from routeplanner import api_client
+
+logger = logging.getLogger(__name__)
 
 DIRECT_ROUTE_TOKENS = {'DCT', 'DIRECT'}
 
@@ -159,6 +162,32 @@ def get_airway_coordinates(
     return [[wp.longitude, wp.latitude] for wp in segment]
 
 
+def get_airway_waypoints(
+    airway_identifier: str,
+    entry_waypoint: Location,
+    exit_waypoint: Location,
+    airway_waypoints_by_upper: dict,
+):
+    waypoints = airway_waypoints_by_upper.get((airway_identifier or '').upper(), [])
+    if not waypoints:
+        return []
+
+    entry_indices = [i for i, wp in enumerate(waypoints) if wp.id == entry_waypoint.id]
+    exit_indices = [i for i, wp in enumerate(waypoints) if wp.id == exit_waypoint.id]
+    if not entry_indices or not exit_indices:
+        return []
+
+    entry_index, exit_index = min(
+        ((ei, xi) for ei in entry_indices for xi in exit_indices),
+        key=lambda pair: abs(pair[0] - pair[1]),
+    )
+
+    if entry_index < exit_index:
+        return waypoints[entry_index:exit_index + 1]
+    else:
+        return list(reversed(waypoints[exit_index:entry_index + 1]))
+
+
 def calculate_distance_squared(wp: Location, ref_wp: Location) -> float:
     """Calculate squared distance between two waypoints (avoids sqrt)"""
     return (wp.latitude - ref_wp.latitude) ** 2 + (wp.longitude - ref_wp.longitude) ** 2
@@ -215,56 +244,14 @@ def resolve_token(
             'identifier': airway.identifier
         }
     
-    # Both exist - choose the closer one
-    # For waypoint, use its coordinates
-    # For airway, use the first waypoint's coordinates
-    if prev_location:
-        # Get closest waypoint from the waypoints list
-        closest_waypoint = min(
-            waypoints,
-            key=lambda w: calculate_distance_squared(w, prev_location)
-        )
-        waypoint_distance = calculate_distance_squared(closest_waypoint, prev_location)
-        
-        # Get first waypoint of airway as entry point
-        airway_points = airway_waypoints_by_upper.get(token_upper, [])
-        airway_first_wp = airway_points[0] if airway_points else None
-        if airway_first_wp:
-            airway_distance = calculate_distance_squared(airway_first_wp, prev_location)
-        else:
-            airway_distance = float('inf')
-        
-        # Choose the closer one
-        if waypoint_distance <= airway_distance:
-            return {
-                'type': 'waypoint',
-                'waypoint': closest_waypoint,
-                'identifier': closest_waypoint.identifier,
-                'lon': closest_waypoint.longitude,
-                'lat': closest_waypoint.latitude
-            }
-        else:
-            return {
-                'type': 'airway',
-                'airway': airway,
-                'identifier': airway.identifier
-            }
-    else:
-        # No previous location to compare - prefer waypoint
-        if waypoints:
-            wp = waypoints[0]
-            return {
-                'type': 'waypoint',
-                'waypoint': wp,
-                'identifier': wp.identifier,
-                'lon': wp.longitude,
-                'lat': wp.latitude
-            }
-        return {
-            'type': 'airway',
-            'airway': airway,
-            'identifier': airway.identifier
-        }
+    # Both exist - always prefer airway.
+    # In aviation route strings, if a token matches an airway designator it is
+    # an airway reference, never a coincidentally-named waypoint.
+    return {
+        'type': 'airway',
+        'airway': airway,
+        'identifier': airway.identifier
+    }
 
 
 def build_plotting_caches(normalized_lines):
@@ -283,24 +270,22 @@ def build_plotting_caches(normalized_lines):
                 continue
             token_upper_set.add(token_upper)
 
-    # Route groups and colors: load all matches for this request's lines in one query.
     route_group_by_line_upper = {}
     route_color_by_line_upper = {}
     if line_upper_set:
-        route_candidates = list(
-            Route.objects
-            .annotate(identifier_upper=Upper('identifier'), routestring_upper=Upper('routestring'))
-            .filter(Q(identifier_upper__in=line_upper_set) | Q(routestring_upper__in=line_upper_set))
-            .only('identifier', 'routestring', 'group', 'color')
-        )
-        for route in route_candidates:
+        try:
+            event_id = api_client.get_latest_event_id()
+            all_routes = api_client.list_routes(event_id) if event_id else []
+        except Exception:
+            logger.exception("Failed to fetch routes from API for plotting")
+            all_routes = []
+        for route in all_routes:
             identifier_key = (route.identifier or '').upper()
             routestring_key = normalize_route_text(route.routestring).upper()
-            # Keep identifier exact match as higher priority.
-            if identifier_key and identifier_key not in route_group_by_line_upper:
+            if identifier_key in line_upper_set and identifier_key not in route_group_by_line_upper:
                 route_group_by_line_upper[identifier_key] = route.group
                 route_color_by_line_upper[identifier_key] = route.color
-            if routestring_key and routestring_key not in route_group_by_line_upper:
+            if routestring_key in line_upper_set and routestring_key not in route_group_by_line_upper:
                 route_group_by_line_upper[routestring_key] = route.group
                 route_color_by_line_upper[routestring_key] = route.color
 
@@ -325,18 +310,16 @@ def build_plotting_caches(normalized_lines):
         key = location.identifier.upper()
         location_candidates_by_upper.setdefault(key, []).append(location)
 
-    # Custom fixes take unconditional priority over navdata.
-    # Build synthetic Location-like objects so the rest of the pipeline is unchanged.
-    custom_fixes = list(
-        CustomFix.objects
-        .filter(identifier__in=token_upper_set)
-        .only('id', 'identifier', 'latitude', 'longitude')
-    )
     custom_fix_upper_set = set()
-    for fix in custom_fixes:
+    try:
+        all_custom_fixes = api_client.list_custom_fixes()
+    except Exception:
+        logger.exception("Failed to fetch custom fixes from API for plotting")
+        all_custom_fixes = []
+    for fix in all_custom_fixes:
         key = fix.identifier.upper()
-        # Synthesise a Location instance so resolve_token / get_airway_coordinates
-        # work without any further changes.
+        if key not in token_upper_set:
+            continue
         synthetic = Location(
             id=fix.id,
             identifier=fix.identifier,
@@ -344,7 +327,6 @@ def build_plotting_caches(normalized_lines):
             longitude=fix.longitude,
         )
         synthetic._is_custom_fix = True
-        # Replace navdata candidates entirely — custom fix is authoritative.
         location_candidates_by_upper[key] = [synthetic]
         custom_fix_upper_set.add(key)
 

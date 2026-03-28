@@ -53,7 +53,6 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'routeplanner.middleware.SessionCheckMiddleware',
-    'routeplanner.middleware.ApiKeyCheckMiddleware',
 ]
 
 ROOT_URLCONF = 'core.urls'
@@ -162,3 +161,6 @@ MOUNT_PATH = urlparse(APP_URL).path.strip('/')
 STATIC_URL = f'/{MOUNT_PATH}/static/' if MOUNT_PATH else '/static/'
 
 FIR_BOUNDARIES_PATH = BASE_DIR / 'data' / 'fir_boundaries.geojson'
+
+CTP_API_URL = os.environ.get('CTP_API_URL', 'http://api:8080')
+CTP_API_KEY = os.environ.get('CTP_API_KEY', '')

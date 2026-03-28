@@ -1,0 +1,94 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="m-5" style="max-width: 640px;">
+    <h2>Data Migration</h2>
+    <p style="color: var(--muted-text);">Migrate data from the local database to the central CTP API. This reads the current local data and pushes it to the API. Existing API data with the same identifiers will be overwritten.</p>
+
+    {% if api_error %}
+    <div class="alert alert-warning">{{ api_error }}</div>
+    {% elif target_event %}
+    <p style="color: var(--muted-text);">Routes will be assigned to event <strong>{{ target_event.title }}</strong> ({{ target_event.date }}, ID {{ target_event.id }}).</p>
+    {% else %}
+    <p style="color: var(--muted-text);">No events found in ctp-api — a new event will be created automatically during migration.</p>
+    {% endif %}
+
+    <table class="table" style="color: var(--text-color);">
+        <thead>
+            <tr>
+                <th>Data</th>
+                <th>Local count</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>Routes</td>
+                <td>{{ route_count }}</td>
+            </tr>
+            <tr>
+                <td>Custom Fixes</td>
+                <td>{{ custom_fix_count }}</td>
+            </tr>
+            <tr>
+                <td>Highlighted Waypoints</td>
+                <td>{{ highlighted_wp_count }}</td>
+            </tr>
+            <tr>
+                <td>Route Revisions</td>
+                <td>{{ revision_count }}</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <div id="migration-result" style="display:none;" class="alert mt-3"></div>
+
+    <button type="button" id="migrate-btn" class="btn btn-primary btn-sm" onclick="runMigration()">Migrate to API</button>
+</div>
+
+<script>
+function runMigration() {
+    var btn = document.getElementById('migrate-btn');
+    var resultDiv = document.getElementById('migration-result');
+    btn.disabled = true;
+    btn.textContent = 'Migrating...';
+    resultDiv.style.display = 'none';
+
+    fetch('{% url "run_migration" %}', {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': '{{ csrf_token }}',
+            'Content-Type': 'application/json',
+        },
+    })
+    .then(function(res) { return res.json(); })
+    .then(function(data) {
+        var parts = [];
+        if (data.routes) parts.push(data.routes + ' routes');
+        if (data.custom_fixes) parts.push(data.custom_fixes + ' custom fixes');
+        if (data.highlighted_waypoints) parts.push(data.highlighted_waypoints + ' highlighted waypoints');
+        if (data.revisions) parts.push(data.revisions + ' revision snapshot');
+
+        if (data.errors && data.errors.length) {
+            resultDiv.className = 'alert alert-warning mt-3';
+            resultDiv.textContent = 'Migrated: ' + (parts.join(', ') || 'nothing') + '. Errors: ' + data.errors.join('; ');
+        } else if (parts.length) {
+            resultDiv.className = 'alert alert-success mt-3';
+            resultDiv.textContent = 'Migrated: ' + parts.join(', ') + '.';
+        } else {
+            resultDiv.className = 'alert alert-info mt-3';
+            resultDiv.textContent = 'No local data to migrate.';
+        }
+        resultDiv.style.display = '';
+        btn.disabled = false;
+        btn.textContent = 'Migrate to API';
+    })
+    .catch(function(err) {
+        resultDiv.className = 'alert alert-danger mt-3';
+        resultDiv.textContent = 'Request failed: ' + err;
+        resultDiv.style.display = '';
+        btn.disabled = false;
+        btn.textContent = 'Migrate to API';
+    });
+}
+</script>
+{% endblock %}

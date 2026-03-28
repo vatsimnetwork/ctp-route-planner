@@ -1,42 +1,16 @@
 import json
+import logging
 import re
 
-from django.db import transaction
 from django.http import JsonResponse
 from django.shortcuts import render
 
+from routeplanner import api_client
 from routeplanner.discord import notify_routes_changed
-from routeplanner.models import Route, RouteRevisionEntry, RouteRevisionSet
-from routeplanner.permissions import write_access_required
+from routeplanner.permissions import WRITE_ROLES, write_access_required
+from routeplanner.views.routeplotter import build_plotting_caches, normalize_route_text
 
-
-def _sorted_routes_queryset():
-    return Route.objects.order_by('group', 'identifier')
-
-
-def _latest_revision_number():
-    latest_revision = RouteRevisionSet.objects.order_by('-number').first()
-    return latest_revision.number if latest_revision else 0
-
-
-def _create_revision_snapshot(routes_queryset):
-    latest_revision = RouteRevisionSet.objects.select_for_update().order_by('-number').first()
-    next_revision_number = (latest_revision.number if latest_revision else 0) + 1
-    revision = RouteRevisionSet.objects.create(number=next_revision_number)
-    RouteRevisionEntry.objects.bulk_create([
-        RouteRevisionEntry(
-            revision=revision,
-            identifier=route.identifier,
-            group=route.group,
-            routestring=route.routestring,
-            facilities=route.facilities,
-            tags=route.tags,
-            color=route.color,
-            enabled=route.enabled,
-        )
-        for route in routes_queryset
-    ])
-    return revision.number
+logger = logging.getLogger(__name__)
 
 
 def _normalize_token_text(value):
@@ -63,16 +37,16 @@ def _coerce_bool(value, default=None):
     return None
 
 
-def _serialize_route(route):
+def _serialize_route(route_ns):
     return {
-        'pk': route.identifier,
-        'identifier': route.identifier,
-        'group': route.group,
-        'routestring': route.routestring,
-        'facilities': route.facilities,
-        'tags': route.tags,
-        'color': route.color,
-        'enabled': route.enabled,
+        'pk': route_ns.identifier,
+        'identifier': route_ns.identifier,
+        'group': route_ns.group,
+        'routestring': route_ns.routestring,
+        'facilities': route_ns.facilities,
+        'tags': route_ns.tags,
+        'color': route_ns.color,
+        'enabled': route_ns.enabled,
     }
 
 
@@ -104,6 +78,7 @@ def _validate_route_payload(route_data, require_original=False, require_current_
 
     validated = {
         'pk': (route_data.get('pk') or '').strip(),
+        'api_id': route_data.get('api_id', 0),
         'identifier': identifier,
         'group': group,
         'routestring': routestring,
@@ -131,23 +106,47 @@ def _validate_route_payload(route_data, require_original=False, require_current_
     return validated, None
 
 
+def _get_current_event_id():
+    event_id = api_client.get_latest_event_id()
+    if event_id is None:
+        raise ValueError("No events exist in ctp-api. Create an event first.")
+    return event_id
+
+
 def routes(request):
-    from routeplanner.permissions import WRITE_ROLES
-    
-    route_list = _sorted_routes_queryset()
+    try:
+        event_id = _get_current_event_id()
+        route_list = api_client.list_routes(event_id)
+        route_list.sort(key=lambda r: (r.group, r.identifier))
+        revision_number = api_client.latest_revision_number()
+    except Exception:
+        logger.exception("Failed to fetch routes from API")
+        route_list = []
+        revision_number = 0
+
     has_write_access = bool(WRITE_ROLES.intersection(request.user_roles))
     return render(request, 'routes.html', {
         'routes': route_list,
-        'current_revision_number': _latest_revision_number(),
+        'current_revision_number': revision_number,
         'has_write_access': has_write_access,
     })
 
 
 @write_access_required
-@transaction.atomic
 def route_delete(request, identifier):
     if request.method != 'POST':
         return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+    try:
+        event_id = _get_current_event_id()
+        current_routes = api_client.list_routes(event_id)
+    except Exception:
+        logger.exception("Failed to fetch routes from API")
+        return JsonResponse({'error': 'Failed to reach data API'}, status=503)
+
+    route = next((r for r in current_routes if r.identifier == identifier), None)
+    if route is None:
+        return JsonResponse({'success': True})
 
     try:
         payload = json.loads(request.body or '{}')
@@ -156,7 +155,7 @@ def route_delete(request, identifier):
 
     original = payload.get('original') or {}
     original_pk = (original.get('pk') or '').strip()
-    original_routestring = (original.get('routestring') or '').strip()
+    original_routestring = _normalize_token_text(original.get('routestring'))
     original_group = (original.get('group') or '').strip()
     original_facilities = _normalize_token_text(original.get('facilities'))
     original_tags = _normalize_token_text(original.get('tags'))
@@ -169,14 +168,8 @@ def route_delete(request, identifier):
     if not original_pk or original_pk != identifier:
         return JsonResponse({'error': 'Original route reference is missing.'}, status=400)
 
-    try:
-        route = Route.objects.select_for_update().get(identifier=identifier)
-    except Route.DoesNotExist:
-        # Already gone — treat as success
-        return JsonResponse({'success': True})
-
     if (
-        route.routestring != _normalize_token_text(original_routestring)
+        route.routestring != original_routestring
         or route.group != original_group
         or route.facilities != original_facilities
         or route.tags != original_tags
@@ -185,13 +178,18 @@ def route_delete(request, identifier):
     ):
         return JsonResponse({'error': f"Conflict: route '{original_pk}' was changed by another user."}, status=409)
 
-    route.delete()
+    try:
+        api_client.batch_save_routes(event_id, updates=[], deletes=[route.api_id])
+        api_client.create_route_revision(event_id)
+    except Exception:
+        logger.exception("Failed to delete route via API")
+        return JsonResponse({'error': 'Failed to save to data API'}, status=503)
+
     notify_routes_changed(f"deleted '{identifier}'")
     return JsonResponse({'success': True})
 
 
 @write_access_required
-@transaction.atomic
 def routes_save(request):
     if request.method != 'POST':
         return JsonResponse({'error': 'Method not allowed'}, status=405)
@@ -221,10 +219,17 @@ def routes_save(request):
     if not updates and not deletes:
         return JsonResponse({'success': True, 'message': 'No changes to save.'})
 
-    existing_routes = list(Route.objects.select_for_update().all())
-    routes_by_identifier = {route.identifier: route for route in existing_routes}
-    reserved_identifiers = {route.identifier for route in existing_routes}
+    try:
+        event_id = _get_current_event_id()
+        current_routes = api_client.list_routes(event_id)
+    except Exception:
+        logger.exception("Failed to fetch routes from API")
+        return JsonResponse({'error': 'Failed to reach data API'}, status=503)
 
+    routes_by_identifier = {r.identifier: r for r in current_routes}
+    reserved_identifiers = {r.identifier for r in current_routes}
+
+    delete_ids = []
     for route_data in deletes:
         original = route_data['original']
         route = routes_by_identifier.get(original['pk'])
@@ -240,19 +245,22 @@ def routes_save(request):
         ):
             return JsonResponse({'error': f"Conflict: route '{original['pk']}' was changed by another user."}, status=409)
 
-        route.delete()
+        delete_ids.append(route.api_id)
         reserved_identifiers.discard(route.identifier)
-        routes_by_identifier.pop(route.identifier, None)
+        del routes_by_identifier[route.identifier]
 
+    segment_updates = []
     saved_routes = []
     for route_data in updates:
         current_identifier = route_data['pk']
         original = route_data['original']
+        api_id = route_data.get('api_id', 0)
 
         if current_identifier:
             route = routes_by_identifier.get(current_identifier)
             if route is None:
                 return JsonResponse({'error': f"Conflict: route '{current_identifier}' no longer exists."}, status=409)
+            api_id = route.api_id
             if (
                 route.routestring != original['routestring']
                 or route.group != original['group']
@@ -263,50 +271,56 @@ def routes_save(request):
             ):
                 return JsonResponse({'error': f"Conflict: route '{current_identifier}' was changed by another user."}, status=409)
         else:
-            route = None
+            api_id = 0
 
         new_identifier = route_data['identifier']
         taken = reserved_identifiers - ({current_identifier} if current_identifier else set())
         if new_identifier in taken:
             return JsonResponse({'error': f"Identifier '{new_identifier}' is already in use."}, status=400)
 
-        if route is None:
-            route = Route.objects.create(
-                identifier=new_identifier,
-                group=route_data['group'],
-                routestring=route_data['routestring'],
-                facilities=route_data['facilities'],
-                tags=route_data['tags'],
-                color=route_data['color'],
-                enabled=route_data['enabled'],
-            )
-        elif new_identifier == route.identifier:
-            route.group = route_data['group']
-            route.routestring = route_data['routestring']
-            route.facilities = route_data['facilities']
-            route.tags = route_data['tags']
-            route.color = route_data['color']
-            route.enabled = route_data['enabled']
-            route.save(update_fields=['group', 'routestring', 'facilities', 'tags', 'color', 'enabled'])
-        else:
-            route.delete()
+        if current_identifier and new_identifier != current_identifier:
+            delete_ids.append(api_id)
             reserved_identifiers.discard(current_identifier)
             routes_by_identifier.pop(current_identifier, None)
-            route = Route.objects.create(
-                identifier=new_identifier,
-                group=route_data['group'],
-                routestring=route_data['routestring'],
-                facilities=route_data['facilities'],
-                tags=route_data['tags'],
-                color=route_data['color'],
-                enabled=route_data['enabled'],
-            )
+            api_id = 0
 
-        reserved_identifiers.add(route.identifier)
-        routes_by_identifier[route.identifier] = route
-        saved_routes.append(_serialize_route(route))
+        seg = api_client.route_to_segment_payload(route_data, api_id, event_id)
+        segment_updates.append(seg)
+        reserved_identifiers.add(new_identifier)
 
-    revision_number = _create_revision_snapshot(_sorted_routes_queryset())
+
+        saved_routes.append({
+            'pk': new_identifier,
+            'identifier': new_identifier,
+            'group': route_data['group'],
+            'routestring': route_data['routestring'],
+            'facilities': route_data['facilities'],
+            'tags': route_data['tags'],
+            'color': route_data['color'],
+            'enabled': route_data['enabled'],
+        })
+
+    all_normalized = [normalize_route_text(rd['routestring']) for rd in updates]
+    try:
+        caches = build_plotting_caches(all_normalized)
+    except Exception:
+        logger.exception("Failed to build plotting caches for location resolution")
+        caches = {}
+
+    for seg, route_data in zip(segment_updates, updates):
+        normalized = normalize_route_text(route_data['routestring'])
+        try:
+            seg['locations'] = api_client.resolve_route_to_locations(normalized, caches)
+        except Exception:
+            logger.exception("Failed to resolve locations for route %s", route_data.get('identifier'))
+            seg['locations'] = []
+
+    try:
+        api_client.batch_save_routes(event_id, updates=segment_updates, deletes=delete_ids)
+        revision_number = api_client.create_route_revision(event_id)
+    except Exception:
+        logger.exception("Failed to save routes via API")
+        return JsonResponse({'error': 'Failed to save to data API'}, status=503)
 
     if saved_routes:
         notify_routes_changed(f"saved {len(saved_routes)} route(s)")

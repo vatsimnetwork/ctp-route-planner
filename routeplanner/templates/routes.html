@@ -273,6 +273,7 @@
                     <tr
                         class="route-row"
                         data-pk="{{ route.identifier }}"
+                        data-api-id="{{ route.api_id }}"
                         data-original-pk="{{ route.identifier }}"
                         data-original-group="{{ route.group|escapejs }}"
                         data-original-routestring="{{ route.routestring|escapejs }}"
@@ -312,6 +313,7 @@
                     <tr
                         class="route-row"
                         data-pk="{{ route.identifier }}"
+                        data-api-id="{{ route.api_id }}"
                         data-original-pk="{{ route.identifier }}"
                         data-original-group="{{ route.group|escapejs }}"
                         data-original-routestring="{{ route.routestring|escapejs }}"
@@ -953,6 +955,7 @@ function saveAll() {
     const updates = [];
     rows.forEach(row => {
         const pk = row.dataset.pk;
+        const apiId = parseInt(row.dataset.apiId || '0', 10) || 0;
         const identifierInput = row.querySelector('input[name="identifier"]');
         identifierInput.value = identifierInput.value.trim().toUpperCase();
         const identifier = identifierInput.value;
@@ -971,6 +974,7 @@ function saveAll() {
         if (isRowChanged(row)) {
             updates.push({
                 pk,
+                api_id: apiId,
                 identifier,
                 group,
                 routestring,

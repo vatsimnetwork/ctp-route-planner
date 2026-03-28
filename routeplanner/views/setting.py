@@ -5,10 +5,13 @@ import logging
 from django.conf import settings
 from django.core.paginator import Paginator
 from django.db import transaction
+from django.http import JsonResponse
 from django.shortcuts import redirect, render
 
-from routeplanner.models import Location, Airway, AirwayWaypoint
+from routeplanner import api_client
+from routeplanner.models import Location, Airway, AirwayWaypoint, Route, RouteRevisionSet, RouteRevisionEntry, CustomFix, HighlightedWaypoint
 from routeplanner.permissions import is_administrator
+from routeplanner.views.routeplotter import build_plotting_caches, normalize_route_text
 
 logger = logging.getLogger(__name__)
 
@@ -189,3 +192,115 @@ def delete_all_airways(request):
     if request.method == 'POST':
         Airway.objects.all().delete()
     return redirect('airways_settings')
+
+
+@is_administrator
+def migration_settings(request):
+    route_count = Route.objects.count()
+    custom_fix_count = CustomFix.objects.count()
+    highlighted_wp_count = HighlightedWaypoint.objects.count()
+    revision_count = RouteRevisionSet.objects.count()
+
+    target_event = None
+    api_error = None
+    try:
+        events = api_client.get_events()
+        if events:
+            events_sorted = sorted(events, key=lambda e: e.get('date', ''), reverse=True)
+            target_event = events_sorted[0]
+    except Exception:
+        api_error = "Could not reach ctp-api to determine target event."
+
+    return render(request, 'migration.html', {
+        'route_count': route_count,
+        'custom_fix_count': custom_fix_count,
+        'highlighted_wp_count': highlighted_wp_count,
+        'revision_count': revision_count,
+        'target_event': target_event,
+        'api_error': api_error,
+    })
+
+
+@is_administrator
+def run_migration(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+    results = {
+        'routes': 0,
+        'custom_fixes': 0,
+        'highlighted_waypoints': 0,
+        'revisions': 0,
+        'errors': [],
+    }
+
+    try:
+        event = api_client.get_or_create_event()
+        event_id = event.get('id')
+    except Exception as e:
+        logger.exception("Migration: failed to get or create event")
+        return JsonResponse({'errors': [f"Event: {e}"]})
+
+    local_routes = list(Route.objects.order_by('group', 'identifier'))
+    if local_routes:
+        all_normalized = [normalize_route_text(r.routestring) for r in local_routes]
+        try:
+            caches = build_plotting_caches(all_normalized)
+        except Exception:
+            logger.exception("Migration: failed to build plotting caches")
+            caches = {}
+
+        segments = []
+        for route in local_routes:
+            tags = [{'tag': t} for t in route.tags.split() if t] if route.tags else []
+            normalized = normalize_route_text(route.routestring)
+            try:
+                locations = api_client.resolve_route_to_locations(normalized, caches)
+            except Exception:
+                logger.exception("Migration: failed to resolve locations for route %s", route.identifier)
+                locations = []
+            segments.append({
+                'identifier': route.identifier,
+                'routeSegmentGroup': route.group,
+                'routeString': route.routestring,
+                'facilities': route.facilities,
+                'color': route.color,
+                'enabled': route.enabled,
+                'tags': tags,
+                'locations': locations,
+                'eventId': event_id,
+            })
+        try:
+            api_client.batch_save_routes(event_id, updates=segments, deletes=[])
+            results['routes'] = len(segments)
+        except Exception as e:
+            logger.exception("Migration: failed to migrate routes")
+            results['errors'].append(f"Routes: {e}")
+
+    local_fixes = list(CustomFix.objects.all())
+    for fix in local_fixes:
+        try:
+            api_client.upsert_custom_fix(fix.identifier, fix.latitude, fix.longitude, fix.note)
+            results['custom_fixes'] += 1
+        except Exception as e:
+            logger.exception("Migration: failed to migrate custom fix %s", fix.identifier)
+            results['errors'].append(f"Custom fix {fix.identifier}: {e}")
+
+    local_highlighted = list(HighlightedWaypoint.objects.all())
+    for hw in local_highlighted:
+        try:
+            api_client.upsert_highlighted_waypoint(hw.identifier, hw.color, hw.note)
+            results['highlighted_waypoints'] += 1
+        except Exception as e:
+            logger.exception("Migration: failed to migrate highlighted waypoint %s", hw.identifier)
+            results['errors'].append(f"Highlighted waypoint {hw.identifier}: {e}")
+
+    if results['routes'] > 0:
+        try:
+            api_client.create_route_revision(event_id)
+            results['revisions'] = 1
+        except Exception as e:
+            logger.exception("Migration: failed to create route revision")
+            results['errors'].append(f"Route revision: {e}")
+
+    return JsonResponse(results)

@@ -1,34 +1,46 @@
 import json
+import logging
 import re
 
 from django.db.models.functions import Upper
 from django.http import JsonResponse
 from django.shortcuts import render
-from django.views.decorators.http import require_POST
 
-from routeplanner.models import HighlightedWaypoint, Location, CustomFix
+from routeplanner import api_client
+from routeplanner.models import Location
 from routeplanner.permissions import write_access_required
 from routeplanner.views.routeplotter import check_for_oceanic_waypoint
 
+logger = logging.getLogger(__name__)
+
 
 def highlighted_waypoints_geojson(request):
-    highlights = list(HighlightedWaypoint.objects.all())
+    try:
+        highlights = api_client.list_highlighted_waypoints()
+    except Exception:
+        logger.exception("Failed to fetch highlighted waypoints from API")
+        return JsonResponse({"type": "FeatureCollection", "features": []})
+
     if not highlights:
         return JsonResponse({"type": "FeatureCollection", "features": []})
 
-    # All identifiers are stored uppercase in HighlightedWaypoint
     identifiers = [hw.identifier for hw in highlights]
     hw_map = {hw.identifier: hw for hw in highlights}
 
     coord_map = {}
 
-    # CustomFix identifiers are also uppercase — plain equality is fine
-    for fix in CustomFix.objects.filter(identifier__in=identifiers):
-        coord_map[fix.identifier] = (fix.longitude, fix.latitude)
+    try:
+        api_fixes = api_client.list_custom_fixes()
+        fix_map = {f.identifier: f for f in api_fixes}
+        for ident in identifiers:
+            if ident in fix_map:
+                f = fix_map[ident]
+                coord_map[ident] = (f.longitude, f.latitude)
+    except Exception:
+        logger.exception("Failed to fetch custom fixes from API for highlighted waypoints")
 
     remaining = [i for i in identifiers if i not in coord_map]
     if remaining:
-        # Location identifiers may be mixed-case in the DB, so compare via Upper()
         for loc in (
             Location.objects
             .annotate(identifier_upper=Upper('identifier'))
@@ -38,12 +50,11 @@ def highlighted_waypoints_geojson(request):
             if key not in coord_map:
                 coord_map[key] = (loc.longitude, loc.latitude)
 
-    # Fall back to oceanic coordinate parsing for anything still unresolved
     for identifier in identifiers:
         if identifier not in coord_map:
             result = check_for_oceanic_waypoint(identifier)
             if result:
-                coord_map[identifier] = (result[1], result[0])  # (lon, lat)
+                coord_map[identifier] = (result[1], result[0])
 
     features = []
     for identifier, (lon, lat) in coord_map.items():
@@ -59,13 +70,19 @@ def highlighted_waypoints_geojson(request):
 
 @write_access_required
 def highlighted_waypoints(request):
-    entries = HighlightedWaypoint.objects.all()
+    try:
+        entries = api_client.list_highlighted_waypoints()
+    except Exception:
+        logger.exception("Failed to fetch highlighted waypoints from API")
+        entries = []
     return render(request, 'highlightedwaypoints.html', {'entries': entries})
 
 
 @write_access_required
-@require_POST
 def highlighted_waypoint_create(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
     try:
         data = json.loads(request.body)
     except (json.JSONDecodeError, ValueError):
@@ -82,23 +99,29 @@ def highlighted_waypoint_create(request):
     if not re.fullmatch(r'#[0-9a-fA-F]{6}', color):
         return JsonResponse({'error': 'Color must be a valid hex color (e.g. #ff0000)'}, status=400)
 
-    entry, created = HighlightedWaypoint.objects.update_or_create(
-        identifier=identifier,
-        defaults={'color': color, 'note': note},
-    )
+    try:
+        result = api_client.upsert_highlighted_waypoint(identifier, color, note)
+    except Exception:
+        logger.exception("Failed to upsert highlighted waypoint via API")
+        return JsonResponse({'error': 'Failed to save to data API'}, status=503)
 
     return JsonResponse({
-        'identifier': entry.identifier,
-        'color': entry.color,
-        'note': entry.note,
-        'created': created,
-    }, status=201 if created else 200)
+        'identifier': result.get('identifier', identifier),
+        'color': result.get('color', color),
+        'note': result.get('note', note),
+        'created': True,
+    }, status=201)
 
 
 @write_access_required
-@require_POST
 def highlighted_waypoint_delete(request, identifier):
-    deleted, _ = HighlightedWaypoint.objects.filter(identifier=identifier.upper()).delete()
-    if not deleted:
-        return JsonResponse({'error': 'Not found'}, status=404)
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+    try:
+        api_client.delete_highlighted_waypoint(identifier.upper())
+    except Exception:
+        logger.exception("Failed to delete highlighted waypoint via API")
+        return JsonResponse({'error': 'Failed to delete from data API'}, status=503)
+
     return JsonResponse({'deleted': identifier.upper()})

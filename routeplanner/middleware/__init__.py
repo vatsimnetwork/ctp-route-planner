@@ -1,2 +1,1 @@
 from .session_check import SessionCheckMiddleware
-from .api_key_check import ApiKeyCheckMiddleware
