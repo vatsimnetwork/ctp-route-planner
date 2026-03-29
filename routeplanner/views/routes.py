@@ -249,6 +249,11 @@ def routes_save(request):
         reserved_identifiers.discard(route.identifier)
         del routes_by_identifier[route.identifier]
 
+    try:
+        next_revision = api_client.latest_revision_number() + 1
+    except Exception:
+        next_revision = 0
+
     segment_updates = []
     saved_routes = []
     for route_data in updates:
@@ -284,7 +289,7 @@ def routes_save(request):
             routes_by_identifier.pop(current_identifier, None)
             api_id = 0
 
-        seg = api_client.route_to_segment_payload(route_data, api_id, event_id)
+        seg = api_client.route_to_segment_payload(route_data, api_id, event_id, route_revision=next_revision)
         segment_updates.append(seg)
         reserved_identifiers.add(new_identifier)
 

@@ -132,7 +132,7 @@ def _segment_to_route(seg):
     )
 
 
-def _route_to_segment(route_data, api_id=0, event_id=None, locations=None):
+def _route_to_segment(route_data, api_id=0, event_id=None, locations=None, route_revision=0):
     tags_str = route_data.get('tags', '')
     tags = [{'tag': t} for t in tags_str.split() if t] if tags_str else []
     seg = {
@@ -144,6 +144,7 @@ def _route_to_segment(route_data, api_id=0, event_id=None, locations=None):
         'enabled': route_data.get('enabled', True),
         'tags': tags,
         'locations': locations or [],
+        'routeRevision': route_revision,
     }
     if api_id:
         seg['id'] = api_id
@@ -264,12 +265,16 @@ def list_highlighted_waypoints():
     ) for w in wps]
 
 
-def upsert_highlighted_waypoint(identifier, color, note=''):
+def upsert_highlighted_waypoint(identifier, color, note='', waypoint_id=None, latitude=None, longitude=None):
     payload = {
         'identifier': identifier,
         'color': color,
         'note': note,
     }
+    if waypoint_id is not None and latitude is not None and longitude is not None:
+        payload['waypointId'] = waypoint_id
+        payload['latitude'] = latitude
+        payload['longitude'] = longitude
     resp = requests.post(_url('/highlighted-waypoints'), headers=_headers(), json=payload, timeout=_TIMEOUT)
     resp.raise_for_status()
     return resp.json()
@@ -281,5 +286,5 @@ def delete_highlighted_waypoint(identifier):
     return resp.json()
 
 
-def route_to_segment_payload(route_data, api_id=0, event_id=None, locations=None):
-    return _route_to_segment(route_data, api_id, event_id, locations)
+def route_to_segment_payload(route_data, api_id=0, event_id=None, locations=None, route_revision=0):
+    return _route_to_segment(route_data, api_id, event_id, locations, route_revision)

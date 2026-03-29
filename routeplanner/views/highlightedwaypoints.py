@@ -7,6 +7,7 @@ from django.http import JsonResponse
 from django.shortcuts import render
 
 from routeplanner import api_client
+from routeplanner.api_client import _stable_id_for_identifier
 from routeplanner.models import Location
 from routeplanner.permissions import write_access_required
 from routeplanner.views.routeplotter import check_for_oceanic_waypoint
@@ -99,8 +100,43 @@ def highlighted_waypoint_create(request):
     if not re.fullmatch(r'#[0-9a-fA-F]{6}', color):
         return JsonResponse({'error': 'Color must be a valid hex color (e.g. #ff0000)'}, status=400)
 
+    waypoint_id = None
+    latitude = None
+    longitude = None
+
     try:
-        result = api_client.upsert_highlighted_waypoint(identifier, color, note)
+        api_fixes = api_client.list_custom_fixes()
+        fix_map = {f.identifier: f for f in api_fixes}
+        if identifier in fix_map:
+            f = fix_map[identifier]
+            waypoint_id = _stable_id_for_identifier(identifier)
+            latitude = f.latitude
+            longitude = f.longitude
+    except Exception:
+        pass
+
+    if latitude is None:
+        loc = (
+            Location.objects
+            .annotate(identifier_upper=Upper('identifier'))
+            .filter(identifier_upper=identifier)
+            .first()
+        )
+        if loc:
+            waypoint_id = loc.waypoint_id if loc.waypoint_id is not None else _stable_id_for_identifier(identifier)
+            latitude = loc.latitude
+            longitude = loc.longitude
+
+    if latitude is None:
+        oceanic = check_for_oceanic_waypoint(identifier)
+        if oceanic:
+            lat, lon = oceanic
+            waypoint_id = _stable_id_for_identifier(identifier)
+            latitude = lat
+            longitude = lon
+
+    try:
+        result = api_client.upsert_highlighted_waypoint(identifier, color, note, waypoint_id, latitude, longitude)
     except Exception:
         logger.exception("Failed to upsert highlighted waypoint via API")
         return JsonResponse({'error': 'Failed to save to data API'}, status=503)
