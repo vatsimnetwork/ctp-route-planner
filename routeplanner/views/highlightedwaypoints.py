@@ -7,7 +7,7 @@ from django.http import JsonResponse
 from django.shortcuts import render
 
 from routeplanner import api_client
-from routeplanner.api_client import _stable_id_for_identifier
+from routeplanner.api_client import _stable_id_for_identifier, _waypoint_id
 from routeplanner.models import Location
 from routeplanner.permissions import write_access_required
 from routeplanner.views.routeplotter import check_for_oceanic_waypoint
@@ -123,7 +123,7 @@ def highlighted_waypoint_create(request):
             .first()
         )
         if loc:
-            waypoint_id = loc.waypoint_id if loc.waypoint_id is not None else _stable_id_for_identifier(identifier)
+            waypoint_id = _waypoint_id(loc)
             latitude = loc.latitude
             longitude = loc.longitude
 
