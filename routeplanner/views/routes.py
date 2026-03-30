@@ -74,10 +74,10 @@ def _validate_route_payload(route_data, require_original=False, require_current_
         return None, 'Route string is required.'
     if require_current_values and re.search(r'[^A-Za-z0-9 ]', routestring):
         return None, 'Route string contains invalid characters. Only letters, digits, and spaces are allowed.'
-    if require_current_values and re.search(r'[^A-Za-z0-9 ]', facilities):
-        return None, 'Facilities contains invalid characters. Only letters, digits, and spaces are allowed.'
-    if require_current_values and re.search(r'[^A-Za-z0-9 ]', tags):
-        return None, 'Tags contains invalid characters. Only letters, digits, and spaces are allowed.'
+    if require_current_values and re.search(r'[^A-Za-z0-9 -]', facilities):
+        return None, 'Facilities contains invalid characters. Only letters, digits, spaces, and hyphens are allowed.'
+    if require_current_values and re.search(r'[^A-Za-z0-9 -]', tags):
+        return None, 'Tags contains invalid characters. Only letters, digits, spaces, and hyphens are allowed.'
     if color and not re.fullmatch(r'#[0-9a-fA-F]{6}', color):
         return None, 'Color must be a valid hex color (e.g. #ff0000) or empty.'
 
