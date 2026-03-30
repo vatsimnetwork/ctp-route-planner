@@ -195,7 +195,12 @@
                                 </ul>
                             </li>
                         {% endif %}
-                        <li class="nav-item"><a class="nav-link fw-bold text-primary" href="{% url 'logout' %}">Logout</a></li>
+                        <li class="nav-item">
+                            <form method="post" action="{% url 'logout' %}" style="display:inline">
+                                {% csrf_token %}
+                                <button type="submit" class="nav-link fw-bold text-primary" style="background:none;border:none;padding:0;cursor:pointer;">Logout</button>
+                            </form>
+                        </li>
 
 
                     {% else %}

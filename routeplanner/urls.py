@@ -1,7 +1,7 @@
 from django.urls import path
 from django.conf import settings
-from django.http import HttpResponseRedirect
-from django.views.generic import RedirectView
+from django.http import HttpResponse, HttpResponseRedirect
+from django.views.decorators.http import require_POST
 
 from .views.home import home
 from .views.routeplotter import index, fir_geojson, waypoints_geojson, plot_route
@@ -10,13 +10,20 @@ from .views.setting import waypoint_settings, import_waypoints, delete_all_waypo
 from .views.routes import route_delete, routes, routes_save
 from .views.customfixes import custom_fixes, custom_fix_create, custom_fix_delete
 
+@require_POST
+def _logout(request):
+    sso_logout_url = f'{settings.AUTH_PUBLIC_URL}/auth/logout/'
+    return HttpResponse(
+        f'<!DOCTYPE html><html><body>'
+        f'<form id="f" method="post" action="{sso_logout_url}"></form>'
+        f'<script>document.getElementById("f").submit();</script>'
+        f'</body></html>'
+    )
+
+
 urlpatterns = [
     path('', home, name='home'),
-    path(
-        'auth/logout/',
-        RedirectView.as_view(url=f'{settings.AUTH_PUBLIC_URL}/auth/logout/', permanent=False),
-        name='logout',
-    ),
+    path('auth/logout/', _logout, name='logout'),
     path(
         'auth/login/',
         lambda request: HttpResponseRedirect(f'{settings.AUTH_PUBLIC_URL}/auth/redirect?return_to={settings.APP_URL}'),
