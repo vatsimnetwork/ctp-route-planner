@@ -852,14 +852,48 @@ function normalizeTokenField(value) {
     return value.replace(/[,;]/g, ' ').split(/\s+/).map(part => part.trim()).filter(Boolean).join(' ');
 }
 
-const ROUTE_FIELD_INVALID_CHARS = /[^A-Za-z0-9 ]/g;
+const ROUTESTRING_INVALID_CHARS = /[^A-Za-z0-9 ]/g;
+const FACILITIES_TAGS_INVALID_CHARS = /[^A-Za-z0-9 -]/g;
 
-function hasInvalidRouteChars(value) {
-    return ROUTE_FIELD_INVALID_CHARS.test(value);
+function getInvalidCharsPattern(fieldName) {
+    if (['facilities', 'tags'].includes(fieldName)) {
+        return FACILITIES_TAGS_INVALID_CHARS;
+    }
+    return ROUTESTRING_INVALID_CHARS;
 }
 
-function sanitizeRouteField(value) {
-    return value.replace(ROUTE_FIELD_INVALID_CHARS, '');
+function hasInvalidRouteChars(fieldName, value) {
+    return getInvalidCharsPattern(fieldName).test(value);
+}
+
+function sanitizeRouteField(fieldName, value) {
+    return value.replace(getInvalidCharsPattern(fieldName), '');
+}
+
+function isUppercaseManagedField(fieldName) {
+    return ['identifier', 'group', 'routestring', 'facilities', 'tags'].includes(fieldName);
+}
+
+function uppercaseFieldValue(field) {
+    if (!field || !isUppercaseManagedField(field.name)) {
+        return;
+    }
+
+    const currentValue = field.value || '';
+    const upperValue = currentValue.toUpperCase();
+    if (currentValue === upperValue) {
+        return;
+    }
+
+    if (typeof field.selectionStart === 'number' && typeof field.selectionEnd === 'number') {
+        const start = field.selectionStart;
+        const end = field.selectionEnd;
+        field.value = upperValue;
+        field.setSelectionRange(start, end);
+        return;
+    }
+
+    field.value = upperValue;
 }
 
 function addRow() {
@@ -969,15 +1003,17 @@ function saveAll() {
         const identifierInput = row.querySelector('input[name="identifier"]');
         identifierInput.value = identifierInput.value.trim().toUpperCase();
         const identifier = identifierInput.value;
-        const group = row.querySelector('input[name="group"]').value.trim();
+        const groupInput = row.querySelector('input[name="group"]');
+        groupInput.value = groupInput.value.trim().toUpperCase();
+        const group = groupInput.value;
         const routeInput = row.querySelector('[name="routestring"]');
-        const routestring = normalizeTokenField(sanitizeRouteField(routeInput.value));
+        const routestring = normalizeTokenField(sanitizeRouteField('routestring', routeInput.value)).toUpperCase();
         routeInput.value = routestring;
         const facilitiesInput = row.querySelector('input[name="facilities"]');
-        const facilities = normalizeTokenField(sanitizeRouteField(facilitiesInput.value));
+        const facilities = normalizeTokenField(sanitizeRouteField('facilities', facilitiesInput.value)).toUpperCase();
         facilitiesInput.value = facilities;
         const tagsInput = row.querySelector('input[name="tags"]');
-        const tags = normalizeTokenField(sanitizeRouteField(tagsInput.value));
+        const tags = normalizeTokenField(sanitizeRouteField('tags', tagsInput.value)).toUpperCase();
         tagsInput.value = tags;
         const color = getRowColor(row);
         const enabled = isRouteEnabled(row);
@@ -1045,16 +1081,11 @@ routesTableWrap.addEventListener('input', event => {
         return;
     }
     if (['routestring', 'facilities', 'tags'].includes(event.target.name)) {
-        if (hasInvalidRouteChars(event.target.value)) {
-            showAlert('Only letters, digits, and spaces are allowed in route, facilities, and tags fields.', 'warning');
+        if (hasInvalidRouteChars(event.target.name, event.target.value)) {
+            showAlert('Only letters, digits, spaces, and hyphens are allowed in facilities and tags. Route only allows letters, digits, and spaces.', 'warning');
         }
     }
-    if (event.target.name === 'identifier') {
-        // Auto-uppercase for identifiers.
-        const cur = event.target.selectionStart;
-        event.target.value = event.target.value.toUpperCase();
-        event.target.setSelectionRange(cur, cur);
-    }
+    uppercaseFieldValue(event.target);
     if (event.target.name === 'color') {
         const wrap = event.target.closest('.route-color-wrap');
         if (wrap) wrap.dataset.active = 'true';
@@ -1081,8 +1112,9 @@ routesTableWrap.addEventListener('change', event => {
         return;
     }
     if (['routestring', 'facilities', 'tags'].includes(event.target.name)) {
-        event.target.value = normalizeTokenField(sanitizeRouteField(event.target.value));
+        event.target.value = normalizeTokenField(sanitizeRouteField(event.target.name, event.target.value));
     }
+    uppercaseFieldValue(event.target);
     if (event.target.name === 'enabled') {
         const row = event.target.closest('tr.route-row');
         if (row) {
