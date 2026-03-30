@@ -119,7 +119,7 @@ def _url(path):
 
 def _segment_to_route(seg):
     tags = seg.get('tags') or []
-    tag_str = ' '.join(t.get('tag', '') for t in tags if t.get('tag'))
+    tag_str = ' '.join(sorted(t.get('tag', '') for t in tags if t.get('tag')))
     return SimpleNamespace(
         api_id=seg.get('id', 0),
         identifier=seg.get('identifier', ''),

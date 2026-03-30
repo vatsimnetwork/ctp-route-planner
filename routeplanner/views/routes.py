@@ -17,6 +17,11 @@ def _normalize_token_text(value):
     return ' '.join((value or '').replace(',', ' ').replace(';', ' ').split())
 
 
+def _normalize_tags(value):
+    """Normalize and sort tags so comparison is order-independent."""
+    return ' '.join(sorted(_normalize_token_text(value).split()))
+
+
 def _coerce_bool(value, default=None):
     if value is None:
         return default
@@ -91,7 +96,7 @@ def _validate_route_payload(route_data, require_original=False, require_current_
             'group': (original.get('group') or '').strip(),
             'routestring': _normalize_token_text(original.get('routestring')),
             'facilities': _normalize_token_text(original.get('facilities')),
-            'tags': _normalize_token_text(original.get('tags')),
+            'tags': _normalize_tags(original.get('tags')),
             'color': (original.get('color') or '').strip(),
             'enabled': _coerce_bool(original.get('enabled'), default=True),
         },
@@ -158,7 +163,7 @@ def route_delete(request, identifier):
     original_routestring = _normalize_token_text(original.get('routestring'))
     original_group = (original.get('group') or '').strip()
     original_facilities = _normalize_token_text(original.get('facilities'))
-    original_tags = _normalize_token_text(original.get('tags'))
+    original_tags = _normalize_tags(original.get('tags'))
     original_color = (original.get('color') or '').strip()
     original_enabled = _coerce_bool(original.get('enabled'), default=True)
 
@@ -169,11 +174,11 @@ def route_delete(request, identifier):
         return JsonResponse({'error': 'Original route reference is missing.'}, status=400)
 
     if (
-        route.routestring != original_routestring
-        or route.group != original_group
-        or route.facilities != original_facilities
-        or route.tags != original_tags
-        or route.color != original_color
+        _normalize_token_text(route.routestring) != original_routestring
+        or (route.group or '').strip() != original_group
+        or _normalize_token_text(route.facilities) != original_facilities
+        or _normalize_tags(route.tags) != original_tags
+        or (route.color or '').strip() != original_color
         or route.enabled != original_enabled
     ):
         return JsonResponse({'error': f"Conflict: route '{original_pk}' was changed by another user."}, status=409)
@@ -236,11 +241,11 @@ def routes_save(request):
         if route is None:
             return JsonResponse({'error': f"Conflict: route '{original['pk']}' no longer exists."}, status=409)
         if (
-            route.routestring != original['routestring']
-            or route.group != original['group']
-            or route.facilities != original['facilities']
-            or route.tags != original['tags']
-            or route.color != original['color']
+            _normalize_token_text(route.routestring) != original['routestring']
+            or (route.group or '').strip() != original['group']
+            or _normalize_token_text(route.facilities) != original['facilities']
+            or _normalize_tags(route.tags) != original['tags']
+            or (route.color or '').strip() != original['color']
             or route.enabled != original['enabled']
         ):
             return JsonResponse({'error': f"Conflict: route '{original['pk']}' was changed by another user."}, status=409)
@@ -267,11 +272,11 @@ def routes_save(request):
                 return JsonResponse({'error': f"Conflict: route '{current_identifier}' no longer exists."}, status=409)
             api_id = route.api_id
             if (
-                route.routestring != original['routestring']
-                or route.group != original['group']
-                or route.facilities != original['facilities']
-                or route.tags != original['tags']
-                or route.color != original['color']
+                _normalize_token_text(route.routestring) != original['routestring']
+                or (route.group or '').strip() != original['group']
+                or _normalize_token_text(route.facilities) != original['facilities']
+                or _normalize_tags(route.tags) != original['tags']
+                or (route.color or '').strip() != original['color']
                 or route.enabled != original['enabled']
             ):
                 return JsonResponse({'error': f"Conflict: route '{current_identifier}' was changed by another user."}, status=409)
