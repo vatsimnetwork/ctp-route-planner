@@ -1100,8 +1100,8 @@ function applyFilters() {
             return;
         }
 
-        // Keep unsaved newly added rows visible regardless of search filters.
-        if (row.dataset.isNew === 'true') {
+        // Keep the row visible while the user is actively editing it.
+        if (row.contains(document.activeElement)) {
             row.style.display = '';
             return;
         }
