@@ -852,6 +852,16 @@ function normalizeTokenField(value) {
     return value.replace(/[,;]/g, ' ').split(/\s+/).map(part => part.trim()).filter(Boolean).join(' ');
 }
 
+const ROUTE_FIELD_INVALID_CHARS = /[^A-Za-z0-9 ]/g;
+
+function hasInvalidRouteChars(value) {
+    return ROUTE_FIELD_INVALID_CHARS.test(value);
+}
+
+function sanitizeRouteField(value) {
+    return value.replace(ROUTE_FIELD_INVALID_CHARS, '');
+}
+
 function addRow() {
     ensureTrailingEmptyRow();
     const placeholderRow = document.querySelector('tr.route-row[data-placeholder="true"]');
@@ -961,13 +971,13 @@ function saveAll() {
         const identifier = identifierInput.value;
         const group = row.querySelector('input[name="group"]').value.trim();
         const routeInput = row.querySelector('[name="routestring"]');
-        const routestring = normalizeTokenField(routeInput.value);
+        const routestring = normalizeTokenField(sanitizeRouteField(routeInput.value));
         routeInput.value = routestring;
         const facilitiesInput = row.querySelector('input[name="facilities"]');
-        const facilities = normalizeTokenField(facilitiesInput.value);
+        const facilities = normalizeTokenField(sanitizeRouteField(facilitiesInput.value));
         facilitiesInput.value = facilities;
         const tagsInput = row.querySelector('input[name="tags"]');
-        const tags = normalizeTokenField(tagsInput.value);
+        const tags = normalizeTokenField(sanitizeRouteField(tagsInput.value));
         tagsInput.value = tags;
         const color = getRowColor(row);
         const enabled = isRouteEnabled(row);
@@ -1035,8 +1045,8 @@ routesTableWrap.addEventListener('input', event => {
         return;
     }
     if (['routestring', 'facilities', 'tags'].includes(event.target.name)) {
-        if (/[,;]/.test(event.target.value)) {
-            showAlert('Commas and semicolons are not allowed in route, facilities, or tags fields.', 'warning');
+        if (hasInvalidRouteChars(event.target.value)) {
+            showAlert('Only letters, digits, and spaces are allowed in route, facilities, and tags fields.', 'warning');
         }
     }
     if (event.target.name === 'identifier') {
@@ -1071,7 +1081,7 @@ routesTableWrap.addEventListener('change', event => {
         return;
     }
     if (['routestring', 'facilities', 'tags'].includes(event.target.name)) {
-        event.target.value = normalizeTokenField(event.target.value);
+        event.target.value = normalizeTokenField(sanitizeRouteField(event.target.value));
     }
     if (event.target.name === 'enabled') {
         const row = event.target.closest('tr.route-row');

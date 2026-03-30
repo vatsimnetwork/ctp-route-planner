@@ -72,12 +72,12 @@ def _validate_route_payload(route_data, require_original=False, require_current_
         return None, 'Identifier is required.'
     if require_current_values and not routestring:
         return None, 'Route string is required.'
-    if require_current_values and (',' in routestring or ';' in routestring):
-        return None, 'Commas and semicolons are not allowed in route strings.'
-    if require_current_values and (',' in facilities or ';' in facilities):
-        return None, 'Commas and semicolons are not allowed in facilities.'
-    if require_current_values and (',' in tags or ';' in tags):
-        return None, 'Commas and semicolons are not allowed in tags.'
+    if require_current_values and re.search(r'[^A-Za-z0-9 ]', routestring):
+        return None, 'Route string contains invalid characters. Only letters, digits, and spaces are allowed.'
+    if require_current_values and re.search(r'[^A-Za-z0-9 ]', facilities):
+        return None, 'Facilities contains invalid characters. Only letters, digits, and spaces are allowed.'
+    if require_current_values and re.search(r'[^A-Za-z0-9 ]', tags):
+        return None, 'Tags contains invalid characters. Only letters, digits, and spaces are allowed.'
     if color and not re.fullmatch(r'#[0-9a-fA-F]{6}', color):
         return None, 'Color must be a valid hex color (e.g. #ff0000) or empty.'
 
