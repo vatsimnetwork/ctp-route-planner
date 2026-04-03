@@ -551,7 +551,7 @@ function saveRoutesDraftToStorage() {
             originalGroup: row.dataset.originalGroup || '',
             originalRoutestring: row.dataset.originalRoutestring || '',
             originalFacilities: row.dataset.originalFacilities || '',
-            originalTags: row.dataset.originalTags || '',
+            originalTags: normalizeTagsField(row.dataset.originalTags || ''),
             originalColor: row.dataset.originalColor || '',
             originalEnabled: row.dataset.originalEnabled !== 'false',
             isNew: row.dataset.isNew === 'true',
@@ -852,6 +852,12 @@ function normalizeTokenField(value) {
     return value.replace(/[,;]/g, ' ').split(/\s+/).map(part => part.trim()).filter(Boolean).join(' ');
 }
 
+function normalizeTagsField(value) {
+    // Must match server-side _normalize_tags() behavior: normalize + sort
+    const normalized = normalizeTokenField(value);
+    return normalized.split(/\s+/).sort().join(' ');
+}
+
 const ROUTESTRING_INVALID_CHARS = /[^A-Za-z0-9 ]/g;
 const FACILITIES_TAGS_INVALID_CHARS = /[^A-Za-z0-9 -]/g;
 
@@ -941,9 +947,9 @@ async function deleteRow(btn) {
                 original: {
                     pk: row.dataset.originalPk,
                     group: row.dataset.originalGroup,
-                    routestring: row.dataset.originalRoutestring,
-                    facilities: row.dataset.originalFacilities,
-                    tags: row.dataset.originalTags,
+                    routestring: normalizeTokenField(row.dataset.originalRoutestring),
+                    facilities: normalizeTokenField(row.dataset.originalFacilities),
+                    tags: normalizeTagsField(row.dataset.originalTags),
                     color: row.dataset.originalColor || '',
                     enabled: row.dataset.originalEnabled !== 'false',
                 },
@@ -971,7 +977,7 @@ function isRowChanged(row) {
     const group = row.querySelector('input[name="group"]').value.trim();
     const routestring = normalizeTokenField(row.querySelector('[name="routestring"]').value);
     const facilities = normalizeTokenField(row.querySelector('input[name="facilities"]').value);
-    const tags = normalizeTokenField(row.querySelector('input[name="tags"]').value);
+    const tags = normalizeTagsField(row.querySelector('input[name="tags"]').value);
     const color = getRowColor(row);
     const enabled = isRouteEnabled(row);
     if (row.dataset.isNew === 'true') {
@@ -981,7 +987,7 @@ function isRowChanged(row) {
         || group !== row.dataset.originalGroup
         || routestring !== normalizeTokenField(row.dataset.originalRoutestring)
         || facilities !== normalizeTokenField(row.dataset.originalFacilities)
-        || tags !== normalizeTokenField(row.dataset.originalTags)
+        || tags !== normalizeTagsField(row.dataset.originalTags)
         || color !== (row.dataset.originalColor || '')
         || enabled !== (row.dataset.originalEnabled !== 'false');
 }
@@ -1013,7 +1019,7 @@ function saveAll() {
         const facilities = normalizeTokenField(sanitizeRouteField('facilities', facilitiesInput.value)).toUpperCase();
         facilitiesInput.value = facilities;
         const tagsInput = row.querySelector('input[name="tags"]');
-        const tags = normalizeTokenField(sanitizeRouteField('tags', tagsInput.value)).toUpperCase();
+        const tags = normalizeTagsField(sanitizeRouteField('tags', tagsInput.value)).toUpperCase();
         tagsInput.value = tags;
         const color = getRowColor(row);
         const enabled = isRouteEnabled(row);
@@ -1031,9 +1037,9 @@ function saveAll() {
                 original: {
                     pk: row.dataset.originalPk,
                     group: row.dataset.originalGroup,
-                    routestring: row.dataset.originalRoutestring,
-                    facilities: row.dataset.originalFacilities,
-                    tags: row.dataset.originalTags,
+                    routestring: normalizeTokenField(row.dataset.originalRoutestring),
+                    facilities: normalizeTokenField(row.dataset.originalFacilities),
+                    tags: normalizeTagsField(row.dataset.originalTags),
                     color: row.dataset.originalColor || '',
                     enabled: row.dataset.originalEnabled !== 'false',
                 },
