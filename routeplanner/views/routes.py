@@ -289,10 +289,8 @@ def routes_save(request):
             return JsonResponse({'error': f"Identifier '{new_identifier}' is already in use."}, status=400)
 
         if current_identifier and new_identifier != current_identifier:
-            delete_ids.append(api_id)
             reserved_identifiers.discard(current_identifier)
             routes_by_identifier.pop(current_identifier, None)
-            api_id = 0
 
         seg = api_client.route_to_segment_payload(route_data, api_id, event_id, route_revision=next_revision)
         segment_updates.append(seg)
