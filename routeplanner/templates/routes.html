@@ -448,6 +448,10 @@
                     <input type="checkbox" id="toggle-throughput">
                     <label for="toggle-throughput">Show Throughput</label>
                 </div>
+                <div class="form-check">
+                    <input type="checkbox" id="toggle-disabled-routes">
+                    <label for="toggle-disabled-routes">Show Disabled Routes</label>
+                </div>
             </div>
         </div>
     </div>
@@ -823,9 +827,10 @@ function renderPlotWarnings(tokens) {
 }
 
 function collectVisibleRoutes() {
+    const showDisabledRoutes = document.getElementById('toggle-disabled-routes')?.checked;
     const rows = getRouteRows();
     return rows
-        .filter(row => row.style.display !== 'none' && isRouteEnabled(row))
+        .filter(row => row.style.display !== 'none' && (showDisabledRoutes || isRouteEnabled(row)))
         .map(row => {
             const routestring = normalizeTokenField((row.querySelector('[name="routestring"]')?.value || ''));
             const color = getRowColor(row);
@@ -1126,6 +1131,10 @@ document.getElementById('toggle-throughput').addEventListener('change', function
     throughputLabelLayer.setVisible(this.checked);
     if (this.checked) renderThroughputLabels();
     else closeThroughputPopup();
+});
+
+document.getElementById('toggle-disabled-routes').addEventListener('change', function() {
+    scheduleVisibleRoutesPlot();
 });
 
 // Always load throughput data on page load
