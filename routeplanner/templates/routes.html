@@ -223,6 +223,46 @@
     .routes-page[data-write-access="false"] #routes-actions {
         display: none !important;
     }
+
+    #throughput-popup {
+        background: rgba(15, 23, 42, 0.92);
+        color: #fff;
+        border-radius: 6px;
+        padding: 8px 12px;
+        font-family: monospace;
+        font-size: 12px;
+        min-width: 130px;
+        pointer-events: auto;
+        white-space: nowrap;
+        border: 1px solid rgba(255,255,255,0.12);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    }
+    .tp-popup-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 5px;
+        font-weight: bold;
+        font-size: 13px;
+        gap: 8px;
+    }
+    #tp-popup-close {
+        background: none;
+        border: none;
+        color: rgba(255,255,255,0.55);
+        cursor: pointer;
+        font-size: 16px;
+        line-height: 1;
+        padding: 0;
+    }
+    #tp-popup-close:hover { color: #fff; }
+    .tp-popup-row { padding: 1px 0; }
+    .tp-popup-total {
+        border-top: 1px solid rgba(255,255,255,0.2);
+        margin-top: 5px;
+        padding-top: 5px;
+        font-weight: bold;
+    }
 </style>
 
 <div class="container-fluid routes-page" data-write-access="{{ has_write_access|yesno:'true,false' }}">
@@ -349,6 +389,13 @@
 
         <div id="map-div" class="routes-map-panel">
             <div id="map-canvas"></div>
+            <div id="throughput-popup">
+                <div class="tp-popup-header">
+                    <span id="tp-popup-fix-name"></span>
+                    <button type="button" id="tp-popup-close" title="Close">×</button>
+                </div>
+                <div id="tp-popup-body"></div>
+            </div>
             <div id="map-controls">
                 <div class="control-header">Options</div>
                 <div class="form-check">
@@ -366,6 +413,10 @@
                 <div class="form-check">
                     <input type="checkbox" id="toggle-highlighted-waypoints" checked>
                     <label for="toggle-highlighted-waypoints">Highlighted</label>
+                </div>
+                <div class="form-check">
+                    <input type="checkbox" id="toggle-throughput" checked>
+                    <label for="toggle-throughput">Show Throughput</label>
                 </div>
             </div>
         </div>
@@ -387,6 +438,7 @@ const PLOT_ROUTE_URL = '{% url "plot_route" %}';
 const GET_FIRS_URL = '{% url "fir_geojson" %}';
 const GET_WAYPOINTS_BASE_URL = '{% url "waypoints_geojson" %}';
 const GET_HIGHLIGHTED_WAYPOINTS_URL = '{% url "highlighted_waypoints_geojson" %}';
+const THROUGHPUT_URL = '{% url "throughput_data" %}';
 const ROUTES_DRAFT_STORAGE_KEY = 'ctp-routes-draft-v2';
 const ROUTES_UI_STORAGE_KEY = 'ctp-routes-ui-v1';
 const HAS_WRITE_ACCESS = {{ has_write_access|yesno:'true,false' }};
@@ -720,6 +772,8 @@ function showMap()
 function clearRoutePlot() {
     routeLineSource.clear();
     waypointSource.clear();
+    routeLabelsMap = {};
+    closeThroughputPopup();
 }
 
 function renderPlotWarnings(tokens) {
@@ -741,7 +795,8 @@ function collectVisibleRoutes() {
         .map(row => {
             const routestring = normalizeTokenField((row.querySelector('[name="routestring"]')?.value || ''));
             const color = getRowColor(row);
-            return routestring ? { routestring, color } : null;
+            const identifier = (row.querySelector('input[name="identifier"]')?.value || '').trim().toUpperCase();
+            return routestring ? { routestring, color, identifier } : null;
         })
         .filter(Boolean);
 }
@@ -778,13 +833,19 @@ function plotVisibleRoutesOnMap() {
     })
     .then(r => r.json())
     .then(data => {
+        routeLabelsMap = {};
         const unknownTokens = new Set();
         (data.routes || []).forEach((route, i) => {
+            const routeId = visibleRoutes[i]?.identifier;
+            if (routeId) {
+                routeLabelsMap[routeId] = new Set((route.labels || []).map(l => l.identifier));
+            }
             if (route.coords && route.coords.length > 1) {
                 const lineFeature = new ol.Feature({
                     geometry: new ol.geom.LineString(route.coords.map(c => ol.proj.fromLonLat(c))),
                     group: (route.group || '').trim().toUpperCase(),
                     userColor: visibleRoutes[i]?.color || '',
+                    identifier: routeId || '',
                 });
                 routeLineSource.addFeature(lineFeature);
             }
@@ -792,6 +853,7 @@ function plotVisibleRoutesOnMap() {
             (route.unknown || []).forEach(token => unknownTokens.add(token));
         });
         renderPlotWarnings(Array.from(unknownTokens).sort());
+        if (document.getElementById('toggle-throughput')?.checked) loadThroughput();
     })
     .catch(err => {
         if (err.name !== 'AbortError') {
@@ -843,6 +905,89 @@ map.addLayer(routeLineLayer);
 document.getElementById('toggle-user-colors').addEventListener('change', function() {
     routeLineLayer.changed();
 });
+
+let routeLabelsMap = {};       // routeIdentifier -> Set<fixIdentifier>
+let cachedThroughputSegments = {};
+
+const throughputOverlay = new ol.Overlay({
+    element: document.getElementById('throughput-popup'),
+    positioning: 'bottom-center',
+    offset: [0, -10],
+    stopEvent: true,
+});
+map.addOverlay(throughputOverlay);
+
+function closeThroughputPopup() {
+    throughputOverlay.setPosition(undefined);
+}
+
+function showThroughputPopup(coordinate, fixName, entries) {
+    document.getElementById('tp-popup-fix-name').textContent = fixName;
+    let html;
+    if (!entries.length) {
+        html = '<div class="tp-popup-row" style="opacity:0.6;">No traffic assigned</div>';
+    } else {
+        html = entries.map(function(e) {
+            return '<div class="tp-popup-row">' + e.routeId + ': <strong>' + e.hourly + '/hr</strong></div>';
+        }).join('');
+        if (entries.length > 1) {
+            const total = Math.round(entries.reduce(function(s, e) { return s + e.hourly; }, 0) * 10) / 10;
+            html += '<div class="tp-popup-total">Total: ' + total + '/hr</div>';
+        }
+    }
+    document.getElementById('tp-popup-body').innerHTML = html;
+    throughputOverlay.setPosition(coordinate);
+}
+
+function loadThroughput() {
+    fetch(THROUGHPUT_URL)
+        .then(function(r) { return r.json(); })
+        .then(function(data) { cachedThroughputSegments = data.segments || {}; })
+        .catch(function(err) { console.error('throughput error:', err); });
+}
+
+map.on('click', function(evt) {
+    if (!document.getElementById('toggle-throughput')?.checked) return;
+
+    let clickedFix = null;
+    map.forEachFeatureAtPixel(evt.pixel, function(feature) {
+        if (!(feature.getGeometry() instanceof ol.geom.Point)) return;
+        const name = feature.get('name') || feature.get('identifier');
+        if (name) { clickedFix = name; return true; }
+    }, { hitTolerance: 8 });
+
+    if (!clickedFix) { closeThroughputPopup(); return; }
+
+    const routesAtFix = Object.keys(routeLabelsMap).filter(function(routeId) {
+        return routeLabelsMap[routeId].has(clickedFix);
+    });
+
+    if (!routesAtFix.length) { closeThroughputPopup(); return; }
+
+    const entries = [];
+    routesAtFix.forEach(function(routeId) {
+        const tp = cachedThroughputSegments[routeId];
+        if (tp) entries.push({ routeId: routeId, hourly: tp.hourly, slots: tp.slots });
+    });
+
+    showThroughputPopup(evt.coordinate, clickedFix, entries);
+});
+
+document.getElementById('tp-popup-close').addEventListener('click', closeThroughputPopup);
+
+document.getElementById('toggle-throughput').addEventListener('change', function() {
+    if (this.checked) {
+        loadThroughput();
+    } else {
+        cachedThroughputSegments = {};
+        closeThroughputPopup();
+    }
+});
+
+// Load throughput data on page load if checkbox is checked
+if (document.getElementById('toggle-throughput').checked) {
+    loadThroughput();
+}
 
 // ---------------------------------------------------------------------------
 // Route table functions

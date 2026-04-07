@@ -34,6 +34,10 @@
                 <input type="checkbox" id="toggle-highlighted-waypoints" checked>
                 <label for="toggle-highlighted-waypoints">Highlighted</label>
             </div>
+            <div class="form-check">
+                <input type="checkbox" id="toggle-throughput">
+                <label for="toggle-throughput">Show Throughput</label>
+            </div>
         </div>
     </div>
 </div>
@@ -47,6 +51,7 @@
     const GET_FIRS_URL = '{% url "fir_geojson" %}';
     const GET_WAYPOINTS_BASE_URL = '{% url "waypoints_geojson" %}';
     const GET_HIGHLIGHTED_WAYPOINTS_URL = '{% url "highlighted_waypoints_geojson" %}';
+    const THROUGHPUT_URL = '{% url "throughput_data" %}';
 
     const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
 
@@ -71,6 +76,54 @@
         }
     });
     map.addLayer(routeLineLayer);
+
+    const throughputSource = new ol.source.Vector();
+    const throughputLayer = new ol.layer.Vector({
+        source: throughputSource,
+        zIndex: 16,
+        visible: false,
+        style: function(feature) {
+            return new ol.style.Style({
+                text: new ol.style.Text({
+                    text: feature.get('label'),
+                    font: 'bold 11px monospace',
+                    fill: new ol.style.Fill({ color: '#ffffff' }),
+                    backgroundFill: new ol.style.Fill({ color: 'rgba(15,23,42,0.82)' }),
+                    padding: [2, 5, 2, 5],
+                }),
+            });
+        },
+    });
+    map.addLayer(throughputLayer);
+
+    function renderThroughputLabels(segments) {
+        throughputSource.clear();
+        routeLineSource.getFeatures().forEach(function(feature) {
+            const identifier = feature.get('identifier');
+            if (!identifier) return;
+            const tp = segments[identifier];
+            if (!tp) return;
+            const midpoint = feature.getGeometry().getCoordinateAt(0.5);
+            const labelFeature = new ol.Feature({
+                geometry: new ol.geom.Point(midpoint),
+                label: tp.hourly + '/hr',
+            });
+            throughputSource.addFeature(labelFeature);
+        });
+    }
+
+    function loadThroughput() {
+        fetch(THROUGHPUT_URL)
+            .then(r => r.json())
+            .then(data => renderThroughputLabels(data.segments || {}))
+            .catch(err => console.error('throughput error:', err));
+    }
+
+    document.getElementById('toggle-throughput').addEventListener('change', function() {
+        throughputLayer.setVisible(this.checked);
+        if (this.checked) loadThroughput();
+        else throughputSource.clear();
+    });
 
     const routeInput = document.getElementById('routeInput');
     const routeInputError = document.getElementById('routeInputError');
@@ -188,11 +241,13 @@
                         ),
                         group: route.group,
                         userColor: route.color || '',
+                        identifier: route.identifier || '',
                     });
                     routeLineSource.addFeature(lineFeature);
                 }
                 route.labels.forEach(wp => addWaypoint(wp.lon, wp.lat, wp.identifier));
             });
+            if (document.getElementById('toggle-throughput').checked) loadThroughput();
         })
         .catch(err => console.error('plot_route error:', err));
     });
@@ -200,6 +255,7 @@
         routeInput.value = '';
         waypointSource.clear();
         routeLineSource.clear();
+        throughputSource.clear();
         refreshRouteInputValidation(false);
     });
 

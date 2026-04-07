@@ -272,6 +272,7 @@ def build_plotting_caches(normalized_lines):
 
     route_group_by_line_upper = {}
     route_color_by_line_upper = {}
+    route_identifier_by_line_upper = {}
     if line_upper_set:
         try:
             event_id = api_client.get_latest_event_id()
@@ -285,14 +286,17 @@ def build_plotting_caches(normalized_lines):
             if identifier_key in line_upper_set and identifier_key not in route_group_by_line_upper:
                 route_group_by_line_upper[identifier_key] = route.group
                 route_color_by_line_upper[identifier_key] = route.color
+                route_identifier_by_line_upper[identifier_key] = route.identifier
             if routestring_key in line_upper_set and routestring_key not in route_group_by_line_upper:
                 route_group_by_line_upper[routestring_key] = route.group
                 route_color_by_line_upper[routestring_key] = route.color
+                route_identifier_by_line_upper[routestring_key] = route.identifier
 
     if not token_upper_set:
         return {
             'route_group_by_line_upper': route_group_by_line_upper,
             'route_color_by_line_upper': route_color_by_line_upper,
+            'route_identifier_by_line_upper': route_identifier_by_line_upper,
             'location_candidates_by_upper': {},
             'airway_by_upper': {},
             'airway_waypoints_by_upper': {},
@@ -353,6 +357,7 @@ def build_plotting_caches(normalized_lines):
     return {
         'route_group_by_line_upper': route_group_by_line_upper,
         'route_color_by_line_upper': route_color_by_line_upper,
+        'route_identifier_by_line_upper': route_identifier_by_line_upper,
         'location_candidates_by_upper': location_candidates_by_upper,
         'airway_by_upper': airway_by_upper,
         'airway_waypoints_by_upper': airway_waypoints_by_upper,
@@ -379,10 +384,13 @@ def plot_route(request):
     airway_waypoints_by_upper = caches['airway_waypoints_by_upper']
     custom_fix_upper_set = caches['custom_fix_upper_set']
 
+    route_identifier_by_line_upper = caches['route_identifier_by_line_upper']
+
     result = []
     for normalized_line in normalized_lines:
         route_group = route_group_by_line_upper.get(normalized_line.upper(), '')
         route_color = route_color_by_line_upper.get(normalized_line.upper(), '')
+        route_identifier = route_identifier_by_line_upper.get(normalized_line.upper(), '')
         route_tokens = normalized_line.split()
         
         resolved = []
@@ -458,11 +466,55 @@ def plot_route(request):
         result.append({
             'group': route_group,
             'color': route_color,
+            'identifier': route_identifier,
             'coords': final_coords,
             'labels': final_labels,
             'unknown': [r['identifier'] for r in resolved if r['type'] == 'unknown'],
         })
 
     return JsonResponse({'routes': result})
+
+
+def throughput_data(request):
+    try:
+        event_id = api_client.get_latest_event_id()
+        if not event_id:
+            return JsonResponse({'segments': {}})
+
+        revision = api_client.get_latest_slot_revision(event_id)
+        if not revision:
+            return JsonResponse({'segments': {}})
+
+        draft_str = revision.get('slotPlannerDraftCommentary', '')
+        if not draft_str:
+            return JsonResponse({'segments': {}})
+
+        draft = json.loads(draft_str)
+        slot_groups = draft.get('slotGroups', [])
+
+        all_routes = api_client.list_routes(event_id)
+        id_to_identifier = {r.api_id: r.identifier for r in all_routes}
+
+        segment_totals = {}
+        for group in slot_groups:
+            value = group.get('value', 0)
+            for key in ('depRouteId', 'trackId', 'arrRouteId'):
+                seg_id = group.get(key)
+                if seg_id:
+                    segment_totals[seg_id] = segment_totals.get(seg_id, 0) + value
+
+        segments = {}
+        for seg_id, total in segment_totals.items():
+            identifier = id_to_identifier.get(seg_id)
+            if identifier and total > 0:
+                segments[identifier] = {
+                    'slots': total,
+                    'hourly': round(total / 3, 1),
+                }
+
+        return JsonResponse({'segments': segments})
+    except Exception:
+        logger.exception("Failed to fetch throughput data")
+        return JsonResponse({'segments': {}})
 
 

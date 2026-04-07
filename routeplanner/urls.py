@@ -4,7 +4,7 @@ from django.http import HttpResponse, HttpResponseRedirect
 from django.views.decorators.http import require_POST
 
 from .views.home import home
-from .views.routeplotter import index, fir_geojson, waypoints_geojson, plot_route
+from .views.routeplotter import index, fir_geojson, waypoints_geojson, plot_route, throughput_data
 from .views.highlightedwaypoints import highlighted_waypoints, highlighted_waypoint_create, highlighted_waypoint_delete, highlighted_waypoints_geojson
 from .views.setting import waypoint_settings, import_waypoints, delete_all_waypoints, firboundaries_settings, upload_fir_boundaries, delete_fir_boundaries, airway_settings, import_airway_segments, delete_all_airways, migration_settings, run_migration
 from .views.routes import route_delete, routes, routes_save
@@ -33,6 +33,7 @@ urlpatterns = [
     path('routeplotter/getfirs/', fir_geojson, name='fir_geojson'),
     path('routeplotter/getwaypoints/', waypoints_geojson, name='waypoints_geojson'),
     path('routeplotter/plotroute/', plot_route, name='plot_route'),
+    path('routeplotter/throughput/', throughput_data, name='throughput_data'),
     path('settings/waypoints/', waypoint_settings, name='waypoint_settings'),
     path('settings/waypoints/import/', import_waypoints, name='import_waypoints'),
     path('settings/waypoints/deleteall/', delete_all_waypoints, name='delete_all_waypoints'),
