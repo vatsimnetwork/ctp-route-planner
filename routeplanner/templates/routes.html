@@ -280,6 +280,17 @@
         opacity: 0.55;
         font-size: 11px;
     }
+    .tp-popup-feeder {
+        border-top: 1px solid rgba(255,255,255,0.15);
+        margin-top: 5px;
+        padding-top: 5px;
+        font-size: 11px;
+        opacity: 0.65;
+    }
+    .tp-popup-feeder-label {
+        font-style: italic;
+        margin-bottom: 2px;
+    }
 </style>
 
 <div class="container-fluid routes-page" data-write-access="{{ has_write_access|yesno:'true,false' }}">
@@ -434,7 +445,7 @@
                     <label for="toggle-highlighted-waypoints">Highlighted</label>
                 </div>
                 <div class="form-check">
-                    <input type="checkbox" id="toggle-throughput" checked>
+                    <input type="checkbox" id="toggle-throughput">
                     <label for="toggle-throughput">Show Throughput</label>
                 </div>
             </div>
@@ -792,8 +803,10 @@ function showMap()
 function clearRoutePlot() {
     routeLineSource.clear();
     waypointSource.clear();
+    throughputLabelSource.clear();
     routeLabelsMap = {};
     routeGroupMap = {};
+    fixCoordsMap = {};
     closeThroughputPopup();
 }
 
@@ -855,6 +868,8 @@ function plotVisibleRoutesOnMap() {
     .then(r => r.json())
     .then(data => {
         routeLabelsMap = {};
+        routeGroupMap = {};
+        fixCoordsMap = {};
         const unknownTokens = new Set();
         (data.routes || []).forEach((route, i) => {
             const routeId = visibleRoutes[i]?.identifier;
@@ -871,11 +886,14 @@ function plotVisibleRoutesOnMap() {
                 });
                 routeLineSource.addFeature(lineFeature);
             }
-            (route.labels || []).forEach(wp => addWaypoint(wp.lon, wp.lat, wp.identifier));
+            (route.labels || []).forEach(function(wp) {
+                addWaypoint(wp.lon, wp.lat, wp.identifier);
+                fixCoordsMap[wp.identifier] = ol.proj.fromLonLat([wp.lon, wp.lat]);
+            });
             (route.unknown || []).forEach(token => unknownTokens.add(token));
         });
         renderPlotWarnings(Array.from(unknownTokens).sort());
-        if (document.getElementById('toggle-throughput')?.checked) loadThroughput();
+        loadThroughput();
     })
     .catch(err => {
         if (err.name !== 'AbortError') {
@@ -930,7 +948,27 @@ document.getElementById('toggle-user-colors').addEventListener('change', functio
 
 let routeLabelsMap = {};       // routeIdentifier -> ordered array of fixIdentifiers
 let routeGroupMap = {};        // routeIdentifier -> group (e.g. 'OCA', 'EMEA', 'AMAS')
+let fixCoordsMap = {};         // fixIdentifier -> projected [x, y] coordinate
 let cachedThroughputSegments = {};
+
+const throughputLabelSource = new ol.source.Vector();
+const throughputLabelLayer = new ol.layer.Vector({
+    source: throughputLabelSource,
+    zIndex: 12,
+    visible: false,
+    style: function(feature) {
+        return new ol.style.Style({
+            text: new ol.style.Text({
+                text: feature.get('label'),
+                offsetY: 14,
+                font: '9px monospace',
+                fill: new ol.style.Fill({ color: '#fff' }),
+                stroke: new ol.style.Stroke({ color: '#000', width: 1, opacity: 0.7 }),
+            }),
+        });
+    },
+});
+map.addLayer(throughputLabelLayer);
 
 const throughputOverlay = new ol.Overlay({
     element: document.getElementById('throughput-popup'),
@@ -944,7 +982,7 @@ function closeThroughputPopup() {
     throughputOverlay.setPosition(undefined);
 }
 
-function showThroughputPopup(coordinate, fixName, entries, noTrafficRoutes) {
+function showThroughputPopup(coordinate, fixName, entries, noTrafficRoutes, otherSideInfo) {
     document.getElementById('tp-popup-fix-name').textContent = fixName;
     let html = '';
     if (entries.length) {
@@ -963,6 +1001,19 @@ function showThroughputPopup(coordinate, fixName, entries, noTrafficRoutes) {
     if (!html) {
         html = '<div class="tp-popup-no-traffic">No traffic assigned</div>';
     }
+    if (otherSideInfo && otherSideInfo.length) {
+        otherSideInfo.forEach(function(info) {
+            html += '<div class="tp-popup-feeder">';
+            const via = info.isExit
+                ? 'Via ' + info.ocaId + ' ← ' + info.otherFix
+                : 'Via ' + info.ocaId + ' → ' + info.otherFix;
+            html += '<div class="tp-popup-feeder-label">' + via + ':</div>';
+            info.routes.forEach(function(r) {
+                html += '<div>' + r.routeId + (r.hourly !== null ? ': ' + r.hourly + '/hr' : '') + '</div>';
+            });
+            html += '</div>';
+        });
+    }
     document.getElementById('tp-popup-body').innerHTML = html;
     throughputOverlay.setPosition(coordinate);
 }
@@ -977,24 +1028,46 @@ function refreshThroughputCells() {
     });
 }
 
+function renderThroughputLabels() {
+    throughputLabelSource.clear();
+    Object.keys(fixCoordsMap).forEach(function(fixId) {
+        const routesAtFix = Object.keys(routeLabelsMap).filter(function(routeId) {
+            return routeLabelsMap[routeId].indexOf(fixId) !== -1;
+        });
+        if (!routesAtFix.length) return;
+        const nonOcaRoutes = routesAtFix.filter(function(id) { return routeGroupMap[id] !== 'OCA'; });
+        const effectiveRoutes = nonOcaRoutes.length > 0 ? nonOcaRoutes : routesAtFix;
+        const total = effectiveRoutes.reduce(function(s, id) {
+            const tp = cachedThroughputSegments[id];
+            return s + (tp ? tp.hourly : 0);
+        }, 0);
+        if (!total) return;
+        const feature = new ol.Feature({
+            geometry: new ol.geom.Point(fixCoordsMap[fixId]),
+            label: (Math.round(total * 10) / 10) + '/hr',
+        });
+        throughputLabelSource.addFeature(feature);
+    });
+}
+
 function loadThroughput() {
     fetch(THROUGHPUT_URL)
         .then(function(r) { return r.json(); })
         .then(function(data) {
             cachedThroughputSegments = data.segments || {};
             refreshThroughputCells();
+            if (document.getElementById('toggle-throughput')?.checked) renderThroughputLabels();
         })
         .catch(function(err) { console.error('throughput error:', err); });
 }
 
 map.on('click', function(evt) {
-    if (!document.getElementById('toggle-throughput')?.checked) return;
-
     let clickedFix = null;
     map.forEachFeatureAtPixel(evt.pixel, function(feature) {
         if (!(feature.getGeometry() instanceof ol.geom.Point)) return;
         const name = feature.get('name') || feature.get('identifier');
-        if (name) { clickedFix = name; return true; }
+        // Skip throughput label features (they have 'label', not 'name'/'identifier')
+        if (name && !feature.get('label')) { clickedFix = name; return true; }
     }, { hitTolerance: 8 });
 
     if (!clickedFix) { closeThroughputPopup(); return; }
@@ -1005,9 +1078,6 @@ map.on('click', function(evt) {
 
     if (!routesAtFix.length) { closeThroughputPopup(); return; }
 
-    // At oceanic entry/exit points, an OCA track and AMAS/EMEA routes share the
-    // same fix. Prefer non-OCA routes so we show where traffic is going rather
-    // than the track that delivered it. Fall back to OCA if nothing else exists.
     const nonOcaRoutes = routesAtFix.filter(function(id) { return routeGroupMap[id] !== 'OCA'; });
     const effectiveRoutes = nonOcaRoutes.length > 0 ? nonOcaRoutes : routesAtFix;
 
@@ -1019,25 +1089,47 @@ map.on('click', function(evt) {
         else noTrafficRoutes.push(routeId);
     });
 
-    showThroughputPopup(evt.coordinate, clickedFix, entries, noTrafficRoutes);
+    // At a connection fix, find OCA tracks and what routes feed/receive on their other end.
+    const otherSideInfo = [];
+    if (nonOcaRoutes.length > 0) {
+        routesAtFix.filter(function(id) { return routeGroupMap[id] === 'OCA'; }).forEach(function(ocaId) {
+            const labels = routeLabelsMap[ocaId];
+            const isExit  = labels[labels.length - 1] === clickedFix; // track ends here
+            const isEntry = labels[0] === clickedFix;                  // track starts here
+            if (!isExit && !isEntry) return;
+
+            const otherFix = isExit ? labels[0] : labels[labels.length - 1];
+
+            // At exit (track ends here): find non-OCA routes that terminate at the other end (dep routes).
+            // At entry (track starts here): find non-OCA routes that originate at the other end (arr routes).
+            const otherSideRoutes = Object.keys(routeLabelsMap).filter(function(routeId) {
+                if (routeGroupMap[routeId] === 'OCA') return false;
+                const ol = routeLabelsMap[routeId];
+                return isExit ? ol[ol.length - 1] === otherFix : ol[0] === otherFix;
+            }).map(function(routeId) {
+                const tp = cachedThroughputSegments[routeId];
+                return { routeId: routeId, hourly: tp ? tp.hourly : null };
+            });
+
+            if (otherSideRoutes.length) {
+                otherSideInfo.push({ ocaId: ocaId, otherFix: otherFix, isExit: isExit, routes: otherSideRoutes });
+            }
+        });
+    }
+
+    showThroughputPopup(evt.coordinate, clickedFix, entries, noTrafficRoutes, otherSideInfo);
 });
 
 document.getElementById('tp-popup-close').addEventListener('click', closeThroughputPopup);
 
 document.getElementById('toggle-throughput').addEventListener('change', function() {
-    if (this.checked) {
-        loadThroughput();
-    } else {
-        cachedThroughputSegments = {};
-        closeThroughputPopup();
-        refreshThroughputCells();
-    }
+    throughputLabelLayer.setVisible(this.checked);
+    if (this.checked) renderThroughputLabels();
+    else closeThroughputPopup();
 });
 
-// Load throughput data on page load if checkbox is checked
-if (document.getElementById('toggle-throughput').checked) {
-    loadThroughput();
-}
+// Always load throughput data on page load
+loadThroughput();
 
 // ---------------------------------------------------------------------------
 // Route table functions
