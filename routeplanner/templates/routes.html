@@ -297,7 +297,7 @@
             type="text"
             id="filter-search"
             class="form-control form-control-sm"
-            placeholder="Search identifier, group, route, facilities, or tags…"
+            placeholder="Search identifier, group, route, facilities, tags, or throughput…"
             style="max-width:340px"
             oninput="applyFilters()"
         >
@@ -973,7 +973,7 @@ function refreshThroughputCells() {
         if (!cell) return;
         const identifier = (row.dataset.pk || '').toUpperCase();
         const tp = cachedThroughputSegments[identifier];
-        cell.textContent = tp ? tp.hourly + '/hr' : '';
+        cell.textContent = tp ? tp.hourly + '/hr' : 'None';
     });
 }
 
@@ -1354,13 +1354,15 @@ function applyFilters() {
         const routestring = (row.querySelector('[name="routestring"]').value || '').toLowerCase();
         const facilities = (row.querySelector('input[name="facilities"]').value || '').toLowerCase();
         const tags = (row.querySelector('input[name="tags"]').value || '').toLowerCase();
+        const throughput = (row.querySelector('.route-throughput-cell')?.textContent || '').toLowerCase();
 
         const matchesSearch = !searchTerm
             || identifier.includes(searchTerm)
             || group.includes(searchTerm)
             || routestring.includes(searchTerm)
             || facilities.includes(searchTerm)
-            || tags.includes(searchTerm);
+            || tags.includes(searchTerm)
+            || throughput.includes(searchTerm);
 
         row.style.display = matchesSearch ? '' : 'none';
     });
