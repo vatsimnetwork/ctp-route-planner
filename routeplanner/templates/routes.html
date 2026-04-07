@@ -160,6 +160,15 @@
         vertical-align: middle;
     }
 
+    .route-throughput-cell {
+        display: block;
+        font-size: 0.72rem;
+        color: var(--muted-text);
+        white-space: nowrap;
+        line-height: 1;
+        margin-top: 2px;
+    }
+
     .routes-section-header {
         background: #e5edf6;
         color: #0f172a;
@@ -263,6 +272,14 @@
         padding-top: 5px;
         font-weight: bold;
     }
+    .tp-popup-divider {
+        border-top: 1px solid rgba(255,255,255,0.2);
+        margin: 5px 0;
+    }
+    .tp-popup-no-traffic {
+        opacity: 0.55;
+        font-size: 11px;
+    }
 </style>
 
 <div class="container-fluid routes-page" data-write-access="{{ has_write_access|yesno:'true,false' }}">
@@ -333,6 +350,7 @@
                         </td>
                         <td class="route-enabled-cell">
                             <input type="checkbox" name="enabled" {{ route.enabled|yesno:'checked,' }} {% if not has_write_access %}disabled{% endif %}>
+                            <span class="route-throughput-cell"></span>
                         </td>
                         <td><textarea class="form-control form-control-sm route-string-input" name="routestring" rows="1" {% if not has_write_access %}disabled{% endif %}>{{ route.routestring }}</textarea></td>
                         <td><input type="text" class="form-control form-control-sm" name="facilities" value="{{ route.facilities }}" {% if not has_write_access %}disabled{% endif %}></td>
@@ -373,6 +391,7 @@
                         </td>
                         <td class="route-enabled-cell">
                             <input type="checkbox" name="enabled" {{ route.enabled|yesno:'checked,' }} {% if not has_write_access %}disabled{% endif %}>
+                            <span class="route-throughput-cell"></span>
                         </td>
                         <td><textarea class="form-control form-control-sm route-string-input" name="routestring" rows="1" {% if not has_write_access %}disabled{% endif %}>{{ route.routestring }}</textarea></td>
                         <td><input type="text" class="form-control form-control-sm" name="facilities" value="{{ route.facilities }}" {% if not has_write_access %}disabled{% endif %}></td>
@@ -509,6 +528,7 @@ function createRowElement(rowState) {
         </td>
         <td class="route-enabled-cell">
             <input type="checkbox" name="enabled" checked ${disabledAttr}>
+            <span class="route-throughput-cell"></span>
         </td>
         <td><textarea class="form-control form-control-sm route-string-input" name="routestring" rows="1" ${disabledAttr}></textarea></td>
         <td><input type="text" class="form-control form-control-sm" name="facilities" value="" ${disabledAttr}></td>
@@ -773,6 +793,7 @@ function clearRoutePlot() {
     routeLineSource.clear();
     waypointSource.clear();
     routeLabelsMap = {};
+    routeGroupMap = {};
     closeThroughputPopup();
 }
 
@@ -838,7 +859,8 @@ function plotVisibleRoutesOnMap() {
         (data.routes || []).forEach((route, i) => {
             const routeId = visibleRoutes[i]?.identifier;
             if (routeId) {
-                routeLabelsMap[routeId] = new Set((route.labels || []).map(l => l.identifier));
+                routeLabelsMap[routeId] = (route.labels || []).map(function(l) { return l.identifier; });
+                routeGroupMap[routeId] = (route.group || '').trim().toUpperCase();
             }
             if (route.coords && route.coords.length > 1) {
                 const lineFeature = new ol.Feature({
@@ -906,7 +928,8 @@ document.getElementById('toggle-user-colors').addEventListener('change', functio
     routeLineLayer.changed();
 });
 
-let routeLabelsMap = {};       // routeIdentifier -> Set<fixIdentifier>
+let routeLabelsMap = {};       // routeIdentifier -> ordered array of fixIdentifiers
+let routeGroupMap = {};        // routeIdentifier -> group (e.g. 'OCA', 'EMEA', 'AMAS')
 let cachedThroughputSegments = {};
 
 const throughputOverlay = new ol.Overlay({
@@ -921,13 +944,11 @@ function closeThroughputPopup() {
     throughputOverlay.setPosition(undefined);
 }
 
-function showThroughputPopup(coordinate, fixName, entries) {
+function showThroughputPopup(coordinate, fixName, entries, noTrafficRoutes) {
     document.getElementById('tp-popup-fix-name').textContent = fixName;
-    let html;
-    if (!entries.length) {
-        html = '<div class="tp-popup-row" style="opacity:0.6;">No traffic assigned</div>';
-    } else {
-        html = entries.map(function(e) {
+    let html = '';
+    if (entries.length) {
+        html += entries.map(function(e) {
             return '<div class="tp-popup-row">' + e.routeId + ': <strong>' + e.hourly + '/hr</strong></div>';
         }).join('');
         if (entries.length > 1) {
@@ -935,14 +956,34 @@ function showThroughputPopup(coordinate, fixName, entries) {
             html += '<div class="tp-popup-total">Total: ' + total + '/hr</div>';
         }
     }
+    if (noTrafficRoutes && noTrafficRoutes.length) {
+        if (html) html += '<div class="tp-popup-divider"></div>';
+        html += '<div class="tp-popup-no-traffic">No traffic: ' + noTrafficRoutes.join(', ') + '</div>';
+    }
+    if (!html) {
+        html = '<div class="tp-popup-no-traffic">No traffic assigned</div>';
+    }
     document.getElementById('tp-popup-body').innerHTML = html;
     throughputOverlay.setPosition(coordinate);
+}
+
+function refreshThroughputCells() {
+    document.querySelectorAll('tr.route-row').forEach(function(row) {
+        const cell = row.querySelector('.route-throughput-cell');
+        if (!cell) return;
+        const identifier = (row.dataset.pk || '').toUpperCase();
+        const tp = cachedThroughputSegments[identifier];
+        cell.textContent = tp ? tp.hourly + '/hr' : '';
+    });
 }
 
 function loadThroughput() {
     fetch(THROUGHPUT_URL)
         .then(function(r) { return r.json(); })
-        .then(function(data) { cachedThroughputSegments = data.segments || {}; })
+        .then(function(data) {
+            cachedThroughputSegments = data.segments || {};
+            refreshThroughputCells();
+        })
         .catch(function(err) { console.error('throughput error:', err); });
 }
 
@@ -959,18 +1000,26 @@ map.on('click', function(evt) {
     if (!clickedFix) { closeThroughputPopup(); return; }
 
     const routesAtFix = Object.keys(routeLabelsMap).filter(function(routeId) {
-        return routeLabelsMap[routeId].has(clickedFix);
+        return routeLabelsMap[routeId].indexOf(clickedFix) !== -1;
     });
 
     if (!routesAtFix.length) { closeThroughputPopup(); return; }
 
+    // At oceanic entry/exit points, an OCA track and AMAS/EMEA routes share the
+    // same fix. Prefer non-OCA routes so we show where traffic is going rather
+    // than the track that delivered it. Fall back to OCA if nothing else exists.
+    const nonOcaRoutes = routesAtFix.filter(function(id) { return routeGroupMap[id] !== 'OCA'; });
+    const effectiveRoutes = nonOcaRoutes.length > 0 ? nonOcaRoutes : routesAtFix;
+
     const entries = [];
-    routesAtFix.forEach(function(routeId) {
+    const noTrafficRoutes = [];
+    effectiveRoutes.forEach(function(routeId) {
         const tp = cachedThroughputSegments[routeId];
         if (tp) entries.push({ routeId: routeId, hourly: tp.hourly, slots: tp.slots });
+        else noTrafficRoutes.push(routeId);
     });
 
-    showThroughputPopup(evt.coordinate, clickedFix, entries);
+    showThroughputPopup(evt.coordinate, clickedFix, entries, noTrafficRoutes);
 });
 
 document.getElementById('tp-popup-close').addEventListener('click', closeThroughputPopup);
@@ -981,6 +1030,7 @@ document.getElementById('toggle-throughput').addEventListener('change', function
     } else {
         cachedThroughputSegments = {};
         closeThroughputPopup();
+        refreshThroughputCells();
     }
 });
 
