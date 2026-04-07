@@ -308,7 +308,7 @@
             type="text"
             id="filter-search"
             class="form-control form-control-sm"
-            placeholder="Search identifier, group, route, facilities, tags, or throughput…"
+            placeholder="Search... use commas, prefix with ! to exclude (e.g. !SPESA)…"
             style="max-width:340px"
             oninput="applyFilters()"
         >
@@ -1422,7 +1422,17 @@ routesTableWrap.addEventListener('change', event => {
 });
 
 function applyFilters() {
-    const searchTerm = document.getElementById('filter-search').value.trim().toLowerCase();
+    const searchInput = (document.getElementById('filter-search').value || '').trim().toLowerCase();
+    const rawTerms = searchInput
+        .split(',')
+        .map(term => term.trim())
+        .filter(Boolean);
+    const includeTerms = rawTerms
+        .filter(term => !term.startsWith('!'));
+    const excludeTerms = rawTerms
+        .filter(term => term.startsWith('!'))
+        .map(term => term.slice(1).trim())
+        .filter(Boolean);
 
     ensureTrailingEmptyRow();
     const rows = getRouteRows();
@@ -1448,13 +1458,14 @@ function applyFilters() {
         const tags = (row.querySelector('input[name="tags"]').value || '').toLowerCase();
         const throughput = (row.querySelector('.route-throughput-cell')?.textContent || '').toLowerCase();
 
-        const matchesSearch = !searchTerm
-            || identifier.includes(searchTerm)
-            || group.includes(searchTerm)
-            || routestring.includes(searchTerm)
-            || facilities.includes(searchTerm)
-            || tags.includes(searchTerm)
-            || throughput.includes(searchTerm);
+        const searchableFields = [identifier, group, routestring, facilities, tags, throughput];
+        const matchesInclude = !includeTerms.length || includeTerms.some(term =>
+            searchableFields.some(field => field.includes(term))
+        );
+        const matchesExclude = !excludeTerms.some(term =>
+            searchableFields.some(field => field.includes(term))
+        );
+        const matchesSearch = matchesInclude && matchesExclude;
 
         row.style.display = matchesSearch ? '' : 'none';
     });
