@@ -50,9 +50,4 @@ class SessionCheckMiddleware:
             return_to = request.build_absolute_uri()
             return HttpResponseRedirect(f'{settings.AUTH_PUBLIC_URL}/auth/redirect?return_to={return_to}')
         
-        if settings.DEBUG:
-            request.is_session_valid = True
-            request.user_cid = "123"
-            request.user_roles = ["administrator"]
-
         return self.get_response(request)
