@@ -429,8 +429,12 @@
             <div id="map-controls">
                 <div class="control-header">Options</div>
                 <div class="form-check">
-                    <input type="checkbox" id="toggle-sectors" checked>
-                    <label for="toggle-sectors">FIR Boundaries</label>
+                    <input type="checkbox" id="toggle-fir-lower" checked>
+                    <label for="toggle-fir-lower">Lower FIR</label>
+                </div>
+                <div class="form-check">
+                    <input type="checkbox" id="toggle-fir-upper">
+                    <label for="toggle-fir-upper">Upper UIR</label>
                 </div>
                 <div class="form-check">
                     <input type="checkbox" id="toggle-waypoints">
@@ -476,7 +480,8 @@ const THROUGHPUT_URL = '{% url "throughput_data" %}';
 const ROUTES_DRAFT_STORAGE_KEY = 'ctp-routes-draft-v2';
 const ROUTES_UI_STORAGE_KEY = 'ctp-routes-ui-v1';
 const MAP_OPTIONS_STORAGE_KEY = 'ctp-routes-map-options-v1';
-const MAP_OPTION_IDS = ['toggle-sectors','toggle-waypoints','toggle-user-colors','toggle-highlighted-waypoints','toggle-throughput','toggle-disabled-routes'];
+const FIR_VISIBILITY_STORAGE_KEY = 'ctp-routes-fir-visibility-v1';
+const MAP_OPTION_IDS = ['toggle-waypoints','toggle-user-colors','toggle-highlighted-waypoints','toggle-throughput','toggle-disabled-routes'];
 const HAS_WRITE_ACCESS = {{ has_write_access|yesno:'true,false' }};
 let routePlotRequestController = null;
 let routePlotDebounceTimer = null;
@@ -485,6 +490,7 @@ let isApplyingStoredDraft = false;
 // Restore map option checkboxes from localStorage before map init so that
 // layers pick up the persisted state when they read checkbox values.
 restoreMapOptionsFromStorage();
+restoreFirVisibilityFromStorage();
 
 // Declared here so functions defined below can reference them before kit init.
 let map, routeLineSource, waypointSource, addWaypoint;
@@ -685,6 +691,26 @@ function restoreMapOptionsFromStorage() {
             }
         });
     } catch { /* ignore invalid stored state */ }
+}
+
+function saveFirVisibilityToStorage() {
+    const showLower = !!document.getElementById('toggle-fir-lower')?.checked;
+    const showUpper = !!document.getElementById('toggle-fir-upper')?.checked;
+    localStorage.setItem(FIR_VISIBILITY_STORAGE_KEY, JSON.stringify({ showLower, showUpper }));
+}
+
+function restoreFirVisibilityFromStorage() {
+    const raw = localStorage.getItem(FIR_VISIBILITY_STORAGE_KEY);
+    if (!raw) return;
+    try {
+        const state = JSON.parse(raw);
+        const lower = document.getElementById('toggle-fir-lower');
+        const upper = document.getElementById('toggle-fir-upper');
+        if (lower && typeof state.showLower === 'boolean') lower.checked = state.showLower;
+        if (upper && typeof state.showUpper === 'boolean') upper.checked = state.showUpper;
+    } catch {
+        // ignore invalid stored value
+    }
 }
 
 function saveUiStateToSessionStorage() {
@@ -954,6 +980,8 @@ const kit = MapShared.createBaseMapKit({
     waypointsUrl: GET_WAYPOINTS_BASE_URL,
     highlightedWaypointsUrl: GET_HIGHLIGHTED_WAYPOINTS_URL,
     initialTheme: document.documentElement.getAttribute('data-theme') || 'light',
+    firUpperControlId: 'toggle-fir-upper',
+    firLowerControlId: 'toggle-fir-lower',
 });
 
 map = kit.map;
@@ -1194,6 +1222,8 @@ document.getElementById('toggle-disabled-routes').addEventListener('change', fun
 MAP_OPTION_IDS.forEach(id => {
     document.getElementById(id)?.addEventListener('change', saveMapOptionsToStorage);
 });
+document.getElementById('toggle-fir-lower')?.addEventListener('change', saveFirVisibilityToStorage);
+document.getElementById('toggle-fir-upper')?.addEventListener('change', saveFirVisibilityToStorage);
 // Fire change events so layers match the restored checkbox state.
 MAP_OPTION_IDS.forEach(id => {
     const el = document.getElementById(id);

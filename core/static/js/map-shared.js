@@ -70,10 +70,16 @@
      *   refreshMapSize,
      * }}
      */
-    function createBaseMapKit({ mapTarget, firUrl, waypointsUrl, highlightedWaypointsUrl, initialTheme }) {
+    function createBaseMapKit({ mapTarget, firUrl, waypointsUrl, highlightedWaypointsUrl, initialTheme, firUpperControlId, firLowerControlId }) {
         let waypointPalette = waypointPaletteForTheme(initialTheme);
         let allWaypointsPointStyle = createWaypointPointStyle(waypointPalette);
         const waypointLabelStyleCache = new Map();
+
+        function buildFirUrl(level) {
+            const safeLevel = (level === 'upper' || level === 'all') ? level : 'normal';
+            const separator = firUrl.indexOf('?') >= 0 ? '&' : '?';
+            return firUrl + separator + 'level=' + encodeURIComponent(safeLevel);
+        }
 
         function getWaypointLabelStyle(identifier) {
             let style = waypointLabelStyleCache.get(identifier);
@@ -104,22 +110,49 @@
             }),
         });
 
+        const firUpperControl = firUpperControlId ? document.getElementById(firUpperControlId) : null;
+        const firLowerControl = firLowerControlId ? document.getElementById(firLowerControlId) : null;
+
+        const getSelectedFirLevel = function () {
+            const showUpper = firUpperControl ? !!firUpperControl.checked : false;
+            const showLower = firLowerControl ? !!firLowerControl.checked : true;
+
+            if (showUpper && showLower) return 'all';
+            if (showUpper) return 'upper';
+            if (showLower) return 'normal';
+            return 'all';
+        };
+
+        const isFeatureHiddenByLevel = function (feature) {
+            const showUpper = firUpperControl ? !!firUpperControl.checked : false;
+            const showLower = firLowerControl ? !!firLowerControl.checked : true;
+            const isUpper = !!feature.get('is_upper');
+
+            if (!showUpper && !showLower) return true;
+            if (isUpper) return !showUpper;
+            return !showLower;
+        };
+
         const firSource = new ol.source.Vector({
-            url: firUrl,
+            url: buildFirUrl(getSelectedFirLevel()),
             format: new ol.format.GeoJSON(),
         });
 
         const firLayer = new ol.layer.Vector({
             source: firSource,
-            style: new ol.style.Style({
-                stroke: new ol.style.Stroke({ color: '#00ffcc', width: 0.1, opacity: 0.5 }),
-            }),
+            style: function (feature) {
+                if (isFeatureHiddenByLevel(feature)) return null;
+                return new ol.style.Style({
+                    stroke: new ol.style.Stroke({ color: '#00ffcc', width: 0.1, opacity: 0.5 }),
+                });
+            },
         });
 
         const firLabelLayer = new ol.layer.Vector({
             source: firSource,
             declutter: true,
             style: function (feature) {
+                if (isFeatureHiddenByLevel(feature)) return null;
                 const props = feature.getProperties();
                 const lon = props.label_lon;
                 const lat = props.label_lat;
@@ -281,13 +314,16 @@
                 setTimeout(function () { map.updateSize(); }, 120);
             });
         }
-        var sectorsToggle = document.getElementById('toggle-sectors');
-        if (sectorsToggle) {
-            sectorsToggle.addEventListener('change', function () {
-                firLayer.setVisible(this.checked);
-                firLabelLayer.setVisible(this.checked);
-            });
-        }
+        const refreshFirByControls = function () {
+                firSource.clear(true);
+                firSource.setUrl(buildFirUrl(getSelectedFirLevel()));
+                firSource.refresh();
+                firLayer.changed();
+                firLabelLayer.changed();
+        };
+
+        if (firUpperControl) firUpperControl.addEventListener('change', refreshFirByControls);
+        if (firLowerControl) firLowerControl.addEventListener('change', refreshFirByControls);
 
         var waypointsToggle = document.getElementById('toggle-waypoints');
         if (waypointsToggle) {

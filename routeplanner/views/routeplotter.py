@@ -19,19 +19,103 @@ def index(request):
 
 _FIR_CACHE_KEY = 'fir_geojson_fallback'
 _FIR_CACHE_TTL = 86400  # 24 hours
+_VATSPY_UIR_MEMBERS_CACHE_KEY = 'vatspy_uir_members'
+_VATSPY_UIR_MEMBERS_CACHE_TTL = 86400  # 24 hours
+
+
+def _parse_uir_member_firs(vatspy_text: str) -> set[str]:
+    """Parse FIR identifiers listed under the [UIRs] section of VATSpy.dat."""
+    member_firs: set[str] = set()
+    in_uir_section = False
+
+    for raw_line in vatspy_text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith(';'):
+            continue
+
+        if line.startswith('[') and line.endswith(']'):
+            in_uir_section = line.upper() == '[UIRS]'
+            continue
+
+        if not in_uir_section:
+            continue
+
+        parts = [part.strip() for part in line.split('|')]
+        if len(parts) < 3:
+            continue
+
+        for fir_id in parts[2].split(','):
+            clean = (fir_id or '').strip().upper()
+            if clean:
+                member_firs.add(clean)
+
+    return member_firs
+
+
+def _get_uir_member_firs() -> set[str]:
+    cached = cache.get(_VATSPY_UIR_MEMBERS_CACHE_KEY)
+    if isinstance(cached, list):
+        return {str(value).upper() for value in cached if value}
+
+    url = 'https://raw.githubusercontent.com/vatsimnetwork/vatspy-data-project/master/VATSpy.dat'
+    response = requests.get(url, timeout=10)
+    response.raise_for_status()
+    member_firs = _parse_uir_member_firs(response.text)
+    cache.set(_VATSPY_UIR_MEMBERS_CACHE_KEY, sorted(member_firs), _VATSPY_UIR_MEMBERS_CACHE_TTL)
+    return member_firs
+
+
+def _filter_fir_features(data: dict, level: str) -> dict:
+    member_firs = _get_uir_member_firs()
+
+    if not member_firs:
+        return data
+
+    annotated_features = []
+    for feature in data.get('features', []):
+        props = dict(feature.get('properties') or {})
+        fir_id = str(props.get('id') or '').strip().upper()
+        is_upper = fir_id in member_firs
+        props['is_upper'] = is_upper
+
+        cloned = dict(feature)
+        cloned['properties'] = props
+        annotated_features.append(cloned)
+
+    if level == 'all':
+        pass
+    elif level == 'upper':
+        annotated_features = [
+            feature for feature in annotated_features
+            if feature.get('properties', {}).get('is_upper')
+        ]
+    else:
+        annotated_features = [
+            feature for feature in annotated_features
+            if not feature.get('properties', {}).get('is_upper')
+        ]
+
+    return {
+        'type': 'FeatureCollection',
+        'features': annotated_features,
+    }
 
 def fir_geojson(request):
+    level = (request.GET.get('level') or 'normal').strip().lower()
+    if level not in {'normal', 'upper', 'all'}:
+        level = 'normal'
+
     local_path = settings.FIR_BOUNDARIES_PATH
     if local_path.exists():
         try:
             data = json.loads(local_path.read_bytes())
-            return JsonResponse(data)
+            return JsonResponse(_filter_fir_features(data, level))
         except (json.JSONDecodeError, OSError):
             pass
 
     cached = cache.get(_FIR_CACHE_KEY)
     if cached is not None:
-        return JsonResponse(cached)
+        return JsonResponse(_filter_fir_features(cached, level))
 
     url = "https://raw.githubusercontent.com/vatsimnetwork/vatspy-data-project/master/Boundaries.geojson"
     try:
@@ -39,8 +123,9 @@ def fir_geojson(request):
         response.raise_for_status()
         data = response.json()
         cache.set(_FIR_CACHE_KEY, data, _FIR_CACHE_TTL)
-        return JsonResponse(data)
+        return JsonResponse(_filter_fir_features(data, level))
     except Exception as e:
+        logger.exception('Failed to load FIR boundaries with level=%s', level)
         return JsonResponse({"error": str(e)}, status=500)
     
 def waypoints_geojson(request):

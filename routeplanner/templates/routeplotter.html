@@ -23,8 +23,12 @@
         <div id="map-controls">
             <div class="control-header">Layers</div>
             <div class="form-check">
-                <input type="checkbox" id="toggle-sectors" checked>
-                <label for="toggle-sectors">FIR Boundaries</label>
+                <input type="checkbox" id="toggle-fir-lower" checked>
+                <label for="toggle-fir-lower">Lower FIR</label>
+            </div>
+            <div class="form-check">
+                <input type="checkbox" id="toggle-fir-upper">
+                <label for="toggle-fir-upper">Upper UIR</label>
             </div>
             <div class="form-check">
                 <input type="checkbox" id="toggle-waypoints" >
@@ -52,6 +56,21 @@
     const GET_WAYPOINTS_BASE_URL = '{% url "waypoints_geojson" %}';
     const GET_HIGHLIGHTED_WAYPOINTS_URL = '{% url "highlighted_waypoints_geojson" %}';
     const THROUGHPUT_URL = '{% url "throughput_data" %}';
+    const FIR_VISIBILITY_STORAGE_KEY = 'ctp-routeplotter-fir-visibility-v1';
+
+    (function restoreFirVisibilityFromStorage() {
+        const raw = localStorage.getItem(FIR_VISIBILITY_STORAGE_KEY);
+        if (!raw) return;
+        try {
+            const state = JSON.parse(raw);
+            const lower = document.getElementById('toggle-fir-lower');
+            const upper = document.getElementById('toggle-fir-upper');
+            if (lower && typeof state.showLower === 'boolean') lower.checked = state.showLower;
+            if (upper && typeof state.showUpper === 'boolean') upper.checked = state.showUpper;
+        } catch {
+            // ignore invalid stored value
+        }
+    }());
 
     const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
 
@@ -61,7 +80,17 @@
         waypointsUrl: GET_WAYPOINTS_BASE_URL,
         highlightedWaypointsUrl: GET_HIGHLIGHTED_WAYPOINTS_URL,
         initialTheme: currentTheme,
+        firUpperControlId: 'toggle-fir-upper',
+        firLowerControlId: 'toggle-fir-lower',
     });
+
+    function saveFirVisibilityToStorage() {
+        const showLower = !!document.getElementById('toggle-fir-lower')?.checked;
+        const showUpper = !!document.getElementById('toggle-fir-upper')?.checked;
+        localStorage.setItem(FIR_VISIBILITY_STORAGE_KEY, JSON.stringify({ showLower, showUpper }));
+    }
+    document.getElementById('toggle-fir-lower')?.addEventListener('change', saveFirVisibilityToStorage);
+    document.getElementById('toggle-fir-upper')?.addEventListener('change', saveFirVisibilityToStorage);
 
     const routeLineLayer = new ol.layer.Vector({
         source: routeLineSource,
