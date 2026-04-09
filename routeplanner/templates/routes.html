@@ -475,10 +475,16 @@ const GET_HIGHLIGHTED_WAYPOINTS_URL = '{% url "highlighted_waypoints_geojson" %}
 const THROUGHPUT_URL = '{% url "throughput_data" %}';
 const ROUTES_DRAFT_STORAGE_KEY = 'ctp-routes-draft-v2';
 const ROUTES_UI_STORAGE_KEY = 'ctp-routes-ui-v1';
+const MAP_OPTIONS_STORAGE_KEY = 'ctp-routes-map-options-v1';
+const MAP_OPTION_IDS = ['toggle-sectors','toggle-waypoints','toggle-user-colors','toggle-highlighted-waypoints','toggle-throughput','toggle-disabled-routes'];
 const HAS_WRITE_ACCESS = {{ has_write_access|yesno:'true,false' }};
 let routePlotRequestController = null;
 let routePlotDebounceTimer = null;
 let isApplyingStoredDraft = false;
+
+// Restore map option checkboxes from localStorage before map init so that
+// layers pick up the persisted state when they read checkbox values.
+restoreMapOptionsFromStorage();
 
 // Declared here so functions defined below can reference them before kit init.
 let map, routeLineSource, waypointSource, addWaypoint;
@@ -656,6 +662,29 @@ function saveRoutesDraftToStorage() {
         return;
     }
     localStorage.setItem(ROUTES_DRAFT_STORAGE_KEY, JSON.stringify({ changedRows, filterSearch }));
+}
+
+function saveMapOptionsToStorage() {
+    const state = {};
+    MAP_OPTION_IDS.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) state[id] = el.checked;
+    });
+    localStorage.setItem(MAP_OPTIONS_STORAGE_KEY, JSON.stringify(state));
+}
+
+function restoreMapOptionsFromStorage() {
+    const raw = localStorage.getItem(MAP_OPTIONS_STORAGE_KEY);
+    if (!raw) return;
+    try {
+        const state = JSON.parse(raw);
+        MAP_OPTION_IDS.forEach(id => {
+            if (typeof state[id] === 'boolean') {
+                const el = document.getElementById(id);
+                if (el) el.checked = state[id];
+            }
+        });
+    } catch { /* ignore invalid stored state */ }
 }
 
 function saveUiStateToSessionStorage() {
@@ -1159,6 +1188,16 @@ document.getElementById('toggle-throughput').addEventListener('change', function
 
 document.getElementById('toggle-disabled-routes').addEventListener('change', function() {
     scheduleVisibleRoutesPlot();
+});
+
+// Persist map option checkbox changes to localStorage and sync initial state.
+MAP_OPTION_IDS.forEach(id => {
+    document.getElementById(id)?.addEventListener('change', saveMapOptionsToStorage);
+});
+// Fire change events so layers match the restored checkbox state.
+MAP_OPTION_IDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.dispatchEvent(new Event('change'));
 });
 
 // Always load throughput data on page load
