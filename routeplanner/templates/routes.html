@@ -879,7 +879,7 @@ function plotVisibleRoutesOnMap() {
         (data.routes || []).forEach((route, i) => {
             const routeId = visibleRoutes[i]?.identifier;
             if (routeId) {
-                routeLabelsMap[routeId] = (route.labels || []).map(function(l) { return l.identifier; });
+                routeLabelsMap[routeId] = (route.labels || []).map(function(l) { return fixKey(l.identifier, l.lon, l.lat); });
                 routeGroupMap[routeId] = (route.group || '').trim().toUpperCase();
             }
             if (route.coords && route.coords.length > 1) {
@@ -893,7 +893,7 @@ function plotVisibleRoutesOnMap() {
             }
             (route.labels || []).forEach(function(wp) {
                 addWaypoint(wp.lon, wp.lat, wp.identifier);
-                fixCoordsMap[wp.identifier] = ol.proj.fromLonLat([wp.lon, wp.lat]);
+                fixCoordsMap[fixKey(wp.identifier, wp.lon, wp.lat)] = ol.proj.fromLonLat([wp.lon, wp.lat]);
             });
             (route.unknown || []).forEach(token => unknownTokens.add(token));
         });
@@ -951,10 +951,32 @@ document.getElementById('toggle-user-colors').addEventListener('change', functio
     routeLineLayer.changed();
 });
 
-let routeLabelsMap = {};       // routeIdentifier -> ordered array of fixIdentifiers
+let routeLabelsMap = {};       // routeIdentifier -> ordered array of fixKeys
 let routeGroupMap = {};        // routeIdentifier -> group (e.g. 'OCA', 'EMEA', 'AMAS')
-let fixCoordsMap = {};         // fixIdentifier -> projected [x, y] coordinate
+let fixCoordsMap = {};         // fixKey -> projected [x, y] coordinate
 let cachedThroughputSegments = {};
+
+// Composite key helpers — disambiguate waypoints sharing the same identifier
+// but at different geographic locations (e.g. SFD in UK vs Venezuela).
+function fixKey(identifier, lon, lat) {
+    return identifier + '@' + Number(lon).toFixed(2) + ',' + Number(lat).toFixed(2);
+}
+function fixDisplayName(key) {
+    const at = key.indexOf('@');
+    return at >= 0 ? key.substring(0, at) : key;
+}
+function resolveClickedFixKey(name, featureCoord) {
+    const candidates = Object.keys(fixCoordsMap).filter(function(k) {
+        return k.startsWith(name + '@');
+    });
+    if (candidates.length <= 1) return candidates[0] || null;
+    return candidates.reduce(function(best, k) {
+        const c = fixCoordsMap[k];
+        const d = Math.pow(c[0] - featureCoord[0], 2) + Math.pow(c[1] - featureCoord[1], 2);
+        const bd = best ? Math.pow(fixCoordsMap[best][0] - featureCoord[0], 2) + Math.pow(fixCoordsMap[best][1] - featureCoord[1], 2) : Infinity;
+        return d < bd ? k : best;
+    }, null);
+}
 
 const throughputLabelSource = new ol.source.Vector();
 const throughputLabelLayer = new ol.layer.Vector({
@@ -1067,18 +1089,22 @@ function loadThroughput() {
 }
 
 map.on('click', function(evt) {
-    let clickedFix = null;
+    let clickedFixKey = null;
+    let clickedDisplayName = null;
     map.forEachFeatureAtPixel(evt.pixel, function(feature) {
         if (!(feature.getGeometry() instanceof ol.geom.Point)) return;
         const name = feature.get('name') || feature.get('identifier');
-        // Skip throughput label features (they have 'label', not 'name'/'identifier')
-        if (name && !feature.get('label')) { clickedFix = name; return true; }
+        if (name && !feature.get('label')) {
+            clickedFixKey = resolveClickedFixKey(name, feature.getGeometry().getCoordinates());
+            clickedDisplayName = name;
+            return true;
+        }
     }, { hitTolerance: 8 });
 
-    if (!clickedFix) { closeThroughputPopup(); return; }
+    if (!clickedFixKey) { closeThroughputPopup(); return; }
 
     const routesAtFix = Object.keys(routeLabelsMap).filter(function(routeId) {
-        return routeLabelsMap[routeId].indexOf(clickedFix) !== -1;
+        return routeLabelsMap[routeId].indexOf(clickedFixKey) !== -1;
     });
 
     if (!routesAtFix.length) { closeThroughputPopup(); return; }
@@ -1099,30 +1125,28 @@ map.on('click', function(evt) {
     if (nonOcaRoutes.length > 0) {
         routesAtFix.filter(function(id) { return routeGroupMap[id] === 'OCA'; }).forEach(function(ocaId) {
             const labels = routeLabelsMap[ocaId];
-            const isExit  = labels[labels.length - 1] === clickedFix; // track ends here
-            const isEntry = labels[0] === clickedFix;                  // track starts here
+            const isExit  = labels[labels.length - 1] === clickedFixKey;
+            const isEntry = labels[0] === clickedFixKey;
             if (!isExit && !isEntry) return;
 
-            const otherFix = isExit ? labels[0] : labels[labels.length - 1];
+            const otherFixKey = isExit ? labels[0] : labels[labels.length - 1];
 
-            // At exit (track ends here): find non-OCA routes that terminate at the other end (dep routes).
-            // At entry (track starts here): find non-OCA routes that originate at the other end (arr routes).
             const otherSideRoutes = Object.keys(routeLabelsMap).filter(function(routeId) {
                 if (routeGroupMap[routeId] === 'OCA') return false;
                 const ol = routeLabelsMap[routeId];
-                return isExit ? ol[ol.length - 1] === otherFix : ol[0] === otherFix;
+                return isExit ? ol[ol.length - 1] === otherFixKey : ol[0] === otherFixKey;
             }).map(function(routeId) {
                 const tp = cachedThroughputSegments[routeId];
                 return { routeId: routeId, hourly: tp ? tp.hourly : null };
             });
 
             if (otherSideRoutes.length) {
-                otherSideInfo.push({ ocaId: ocaId, otherFix: otherFix, isExit: isExit, routes: otherSideRoutes });
+                otherSideInfo.push({ ocaId: ocaId, otherFix: fixDisplayName(otherFixKey), isExit: isExit, routes: otherSideRoutes });
             }
         });
     }
 
-    showThroughputPopup(evt.coordinate, clickedFix, entries, noTrafficRoutes, otherSideInfo);
+    showThroughputPopup(evt.coordinate, clickedDisplayName, entries, noTrafficRoutes, otherSideInfo);
 });
 
 document.getElementById('tp-popup-close').addEventListener('click', closeThroughputPopup);
