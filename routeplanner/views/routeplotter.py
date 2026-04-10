@@ -537,14 +537,20 @@ def plot_route(request):
                 prev_item = next((r for r in reversed(resolved[:i]) if r['type'] == 'waypoint' and r.get('location')), None)
                 next_item = next((r for r in resolved[i + 1:] if r['type'] == 'waypoint' and r.get('location')), None)
                 if prev_item and next_item:
-                    airway_coords = get_airway_coordinates(
+                    airway_wps = get_airway_waypoints(
                         item['identifier'],
                         prev_item['location'],
                         next_item['location'],
                         airway_waypoints_by_upper,
                     )
-                    if airway_coords:
-                        final_coords.extend(airway_coords[1:-1])
+                    for wp in airway_wps[1:-1]:
+                        final_coords.append([wp.longitude, wp.latitude])
+                        final_labels.append({
+                            'identifier': wp.identifier,
+                            'lon': wp.longitude,
+                            'lat': wp.latitude,
+                            'custom_fix': wp.identifier.upper() in custom_fix_upper_set,
+                        })
                 # If airway exists but cannot be resolved between surrounding waypoints,
                 # keep plotting as direct leg and do not classify it as unknown token.
 
