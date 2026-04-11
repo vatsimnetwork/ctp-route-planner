@@ -4,9 +4,9 @@ from django.http import HttpResponse, HttpResponseRedirect
 from django.views.decorators.http import require_POST
 
 from .views.home import home
-from .views.routeplotter import index, fir_geojson, waypoints_geojson, plot_route, throughput_data
+from .views.routeplotter import index, waypoints_geojson, plot_route, throughput_data
 from .views.highlightedwaypoints import highlighted_waypoints, highlighted_waypoint_create, highlighted_waypoint_delete, highlighted_waypoints_geojson
-from .views.setting import waypoint_settings, import_waypoints, delete_all_waypoints, firboundaries_settings, upload_fir_boundaries, delete_fir_boundaries, airway_settings, import_airway_segments, delete_all_airways, migration_settings, run_migration
+from .views.setting import waypoint_settings, import_waypoints, delete_all_waypoints, geojson_overlay_settings, geojson_overlay_add, geojson_overlay_delete, geojson_overlays_list, airway_settings, import_airway_segments, delete_all_airways, migration_settings, run_migration
 from .views.routes import route_delete, routes, routes_save
 from .views.customfixes import custom_fixes, custom_fix_create, custom_fix_delete
 
@@ -30,16 +30,16 @@ urlpatterns = [
         name='login',
     ),
     path('routeplotter/', index, name='routeplotter'),
-    path('routeplotter/getfirs/', fir_geojson, name='fir_geojson'),
     path('routeplotter/getwaypoints/', waypoints_geojson, name='waypoints_geojson'),
     path('routeplotter/plotroute/', plot_route, name='plot_route'),
     path('routeplotter/throughput/', throughput_data, name='throughput_data'),
     path('settings/waypoints/', waypoint_settings, name='waypoint_settings'),
     path('settings/waypoints/import/', import_waypoints, name='import_waypoints'),
     path('settings/waypoints/deleteall/', delete_all_waypoints, name='delete_all_waypoints'),
-    path('settings/firboundaries/', firboundaries_settings, name='firboundaries_settings'),
-    path('settings/firboundaries/upload/', upload_fir_boundaries, name='upload_fir_boundaries'),
-    path('settings/firboundaries/delete/', delete_fir_boundaries, name='delete_fir_boundaries'),
+    path('settings/geojsonoverlays/', geojson_overlay_settings, name='geojson_overlay_settings'),
+    path('settings/geojsonoverlays/add/', geojson_overlay_add, name='geojson_overlay_add'),
+    path('settings/geojsonoverlays/delete/', geojson_overlay_delete, name='geojson_overlay_delete'),
+    path('settings/geojsonoverlays/list/', geojson_overlays_list, name='geojson_overlays_list'),
     path('routes/', routes, name='routes'),
     path('routes/save/', routes_save, name='routes_save'),
     path('routes/delete/<str:identifier>/', route_delete, name='route_delete'),

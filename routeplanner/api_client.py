@@ -296,3 +296,30 @@ def delete_highlighted_waypoint(identifier):
 
 def route_to_segment_payload(route_data, api_id=0, event_id=None, locations=None, route_revision=0):
     return _route_to_segment(route_data, api_id, event_id, locations, route_revision)
+
+
+def list_geojson_overlays():
+    resp = requests.get(_url('/geo-json-overlays'), headers=_headers(), timeout=_TIMEOUT)
+    resp.raise_for_status()
+    overlays = resp.json()
+    return [SimpleNamespace(
+        id=o.get('id', 0),
+        name=o.get('name', ''),
+        url=o.get('url', ''),
+    ) for o in overlays]
+
+
+def upsert_geojson_overlay(name, url):
+    payload = {
+        'name': name,
+        'url': url,
+    }
+    resp = requests.post(_url('/geo-json-overlays'), headers=_headers(), json=payload, timeout=_TIMEOUT)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def delete_geojson_overlay(id):
+    resp = requests.delete(_url(f'/geo-json-overlays/{id}'), headers=_headers(), timeout=_TIMEOUT)
+    resp.raise_for_status()
+    return resp.json()

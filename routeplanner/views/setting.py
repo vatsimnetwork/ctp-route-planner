@@ -61,45 +61,45 @@ def delete_all_waypoints(request):
         Location.objects.all().delete()
     return redirect('waypoint_settings')
 
-@is_administrator
-def firboundaries_settings(request):
-    has_local = settings.FIR_BOUNDARIES_PATH.exists()
-    return render(request, 'firboundariessettings.html', {'has_local': has_local})
 
 @is_administrator
-def upload_fir_boundaries(request):
-    if request.method != 'POST':
-        return redirect('firboundaries_settings')
+def geojson_overlay_settings(request):
+    overlays = api_client.list_geojson_overlays()
+    return render(request, 'geojsonoverlayssettings.html', {'overlays': overlays})
 
-    uploaded = request.FILES.get('geojson_file')
-    if not uploaded:
-        return redirect('firboundaries_settings')
 
-    if not uploaded.name.lower().endswith(('.geojson', '.json')):
-        return redirect('firboundaries_settings')
-
-    raw = uploaded.read()
+def geojson_overlays_list(request):
     try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        return redirect('firboundaries_settings')
+        overlays = api_client.list_geojson_overlays()
+    except Exception:
+        return JsonResponse({'overlays': []})
+    return JsonResponse({'overlays': [{'id': o.id, 'name': o.name, 'url': o.url} for o in overlays]})
 
-    if data.get('type') != 'FeatureCollection':
-        return redirect('firboundaries_settings')
-
-    path = settings.FIR_BOUNDARIES_PATH
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(raw)
-
-    return redirect('firboundaries_settings')
 
 @is_administrator
-def delete_fir_boundaries(request):
+def geojson_overlay_add(request):
     if request.method == 'POST':
-        path = settings.FIR_BOUNDARIES_PATH
-        if path.exists():
-            path.unlink()
-    return redirect('firboundaries_settings')
+        name = request.POST.get('name', '').strip()
+        url = request.POST.get('url', '').strip()
+        if name and url:
+            try:
+                api_client.upsert_geojson_overlay(name, url)
+            except Exception:
+                pass
+    return redirect('geojson_overlay_settings')
+
+
+@is_administrator
+def geojson_overlay_delete(request):
+    if request.method == 'POST':
+        overlay_id = request.POST.get('id')
+        if overlay_id:
+            try:
+                api_client.delete_geojson_overlay(int(overlay_id))
+            except Exception:
+                pass
+    return redirect('geojson_overlay_settings')
+
 
 @is_administrator
 def airway_settings(request):

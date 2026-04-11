@@ -1,0 +1,67 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block content %}
+<div class="container mt-4" id="geojson-overlays-content">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h2>GeoJSON Overlays</h2>
+        <button class="btn btn-primary btn-sm" onclick="document.getElementById('add-form').classList.toggle('d-none')">
+            Add
+        </button>
+    </div>
+
+    <p class="text-muted" style="font-size: 0.9rem;">
+        Configure external GeoJSON files to display as optional overlays on the route planner map.
+        Users can enable up to two overlays at a time from the Options panel on the map.
+    </p>
+
+    <div id="add-form" class="d-none mb-4 p-3" style="background: var(--surface-bg); border: 1px solid var(--surface-border); border-radius: 6px;">
+        <div id="form-error" class="alert alert-danger d-none py-2" style="font-size: 0.875rem;"></div>
+        <form action="{% url 'geojson_overlay_add' %}" method="post">
+            {% csrf_token %}
+            <div class="row g-2 align-items-end">
+                <div class="col-sm-3">
+                    <label class="form-label form-label-sm mb-1">Name</label>
+                    <input type="text" name="name" id="overlay-name" class="form-control form-control-sm" placeholder="e.g. High Altitude" maxlength="100" required>
+                </div>
+                <div class="col-sm-6">
+                    <label class="form-label form-label-sm mb-1">URL</label>
+                    <input type="url" name="url" id="overlay-url" class="form-control form-control-sm" placeholder="https://example.com/file.geojson" required>
+                </div>
+                <div class="col-sm-2">
+                    <button type="submit" class="btn btn-primary btn-sm w-100">Save</button>
+                </div>
+            </div>
+        </form>
+    </div>
+
+    {% if overlays %}
+    <table class="table table-sm" style="font-size: 0.9rem;">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>URL</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody id="overlays-table-body">
+            {% for overlay in overlays %}
+            <tr id="row-{{ overlay.id }}">
+                <td><strong>{{ overlay.name }}</strong></td>
+                <td><code style="font-size: 0.8rem;">{{ overlay.url }}</code></td>
+                <td class="text-end">
+                    <form action="{% url 'geojson_overlay_delete' %}" method="post" class="d-inline">
+                        {% csrf_token %}
+                        <input type="hidden" name="id" value="{{ overlay.id }}">
+                        <button type="submit" class="btn btn-sm btn-outline-danger py-0 px-2" style="font-size: 0.8rem;" onclick="return confirm('Delete overlay &quot;{{ overlay.name }}&quot;?')">Delete</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="text-muted" id="no-overlays-msg">No GeoJSON overlays configured yet.</p>
+    {% endif %}
+</div>
+{% endblock %}

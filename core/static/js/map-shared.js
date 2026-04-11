@@ -55,13 +55,11 @@
      *
      * @param {object} opts
      * @param {string} opts.mapTarget     - DOM element id for the OL map
-     * @param {string} opts.firUrl        - URL for the FIR boundaries GeoJSON endpoint
      * @param {string} opts.waypointsUrl  - Base URL for the waypoints GeoJSON endpoint
      * @param {string} opts.initialTheme  - 'light' | 'dark'
      *
      * @returns {{
      *   map, baseLayer,
-     *   firSource, firLayer, firLabelLayer,
      *   allWaypointsSource, allWaypointsLayer, allWaypointsLabelLayer,
      *   routeLineSource,
      *   waypointSource, waypointLayer,
@@ -70,16 +68,10 @@
      *   refreshMapSize,
      * }}
      */
-    function createBaseMapKit({ mapTarget, firUrl, waypointsUrl, highlightedWaypointsUrl, initialTheme, firUpperControlId, firLowerControlId }) {
+    function createBaseMapKit({ mapTarget, waypointsUrl, highlightedWaypointsUrl, initialTheme }) {
         let waypointPalette = waypointPaletteForTheme(initialTheme);
         let allWaypointsPointStyle = createWaypointPointStyle(waypointPalette);
         const waypointLabelStyleCache = new Map();
-
-        function buildFirUrl(level) {
-            const safeLevel = (level === 'upper' || level === 'all') ? level : 'normal';
-            const separator = firUrl.indexOf('?') >= 0 ? '&' : '?';
-            return firUrl + separator + 'level=' + encodeURIComponent(safeLevel);
-        }
 
         function getWaypointLabelStyle(identifier) {
             let style = waypointLabelStyleCache.get(identifier);
@@ -109,70 +101,6 @@
                 zoom: 1,
             }),
         });
-
-        const firUpperControl = firUpperControlId ? document.getElementById(firUpperControlId) : null;
-        const firLowerControl = firLowerControlId ? document.getElementById(firLowerControlId) : null;
-
-        const getSelectedFirLevel = function () {
-            const showUpper = firUpperControl ? !!firUpperControl.checked : false;
-            const showLower = firLowerControl ? !!firLowerControl.checked : true;
-
-            if (showUpper && showLower) return 'all';
-            if (showUpper) return 'upper';
-            if (showLower) return 'normal';
-            return 'all';
-        };
-
-        const isFeatureHiddenByLevel = function (feature) {
-            const showUpper = firUpperControl ? !!firUpperControl.checked : false;
-            const showLower = firLowerControl ? !!firLowerControl.checked : true;
-            const isUpper = !!feature.get('is_upper');
-
-            if (!showUpper && !showLower) return true;
-            if (isUpper) return !showUpper;
-            return !showLower;
-        };
-
-        const firSource = new ol.source.Vector({
-            url: buildFirUrl(getSelectedFirLevel()),
-            format: new ol.format.GeoJSON(),
-        });
-
-        const firLayer = new ol.layer.Vector({
-            source: firSource,
-            style: function (feature) {
-                if (isFeatureHiddenByLevel(feature)) return null;
-                return new ol.style.Style({
-                    stroke: new ol.style.Stroke({ color: '#00ffcc', width: 0.1, opacity: 0.5 }),
-                });
-            },
-        });
-
-        const firLabelLayer = new ol.layer.Vector({
-            source: firSource,
-            declutter: true,
-            style: function (feature) {
-                if (isFeatureHiddenByLevel(feature)) return null;
-                const props = feature.getProperties();
-                const lon = props.label_lon;
-                const lat = props.label_lat;
-                const identifier = props.id || props.name;
-                if (!lon || !lat || !identifier) return null;
-                return new ol.style.Style({
-                    geometry: new ol.geom.Point(ol.proj.fromLonLat([lon, lat])),
-                    text: new ol.style.Text({
-                        text: identifier,
-                        font: 'bold 10px monospace',
-                        fill: new ol.style.Fill({ color: 'rgba(0, 255, 204, 0.6)' }),
-                        stroke: new ol.style.Stroke({ color: 'rgba(0, 0, 0, 0.45)', width: 1 }),
-                        textAlign: 'center',
-                    }),
-                });
-            },
-        });
-
-        map.addLayer(firLayer);
-        map.addLayer(firLabelLayer);
 
         let allWaypointsSource = new ol.source.Vector();
         let waypointFetchController = null;
@@ -314,16 +242,6 @@
                 setTimeout(function () { map.updateSize(); }, 120);
             });
         }
-        const refreshFirByControls = function () {
-                firSource.clear(true);
-                firSource.setUrl(buildFirUrl(getSelectedFirLevel()));
-                firSource.refresh();
-                firLayer.changed();
-                firLabelLayer.changed();
-        };
-
-        if (firUpperControl) firUpperControl.addEventListener('change', refreshFirByControls);
-        if (firLowerControl) firLowerControl.addEventListener('change', refreshFirByControls);
 
         var waypointsToggle = document.getElementById('toggle-waypoints');
         if (waypointsToggle) {
@@ -351,9 +269,6 @@
         return {
             map,
             baseLayer,
-            firSource,
-            firLayer,
-            firLabelLayer,
             allWaypointsSource,
             allWaypointsLayer,
             allWaypointsLabelLayer,
@@ -369,6 +284,114 @@
         };
     }
 
+    function OverlayLayer(map) {
+        const source = new ol.source.Vector({
+            format: new ol.format.GeoJSON(),
+        });
+
+        const layer = new ol.layer.Vector({
+            source: source,
+            style: new ol.style.Style({
+                stroke: new ol.style.Stroke({
+                    color: '#00ffcc',
+                    width: 0.1,
+                    opacity: 0.5,
+                }),
+            }),
+            zIndex: 6,
+        });
+
+        const labelLayer = new ol.layer.Vector({
+            source: source,
+            declutter: true,
+            zIndex: 7,
+            style: function(feature) {
+                const props = feature.getProperties();
+                const identifier = props.label || props.name || props.id || props.ID;
+                if (!identifier) return null;
+
+                let lon = props.label_lon || props.lon || props.LON;
+                let lat = props.label_lat || props.lat || props.LAT;
+
+                if (!lon || !lat) {
+                    const geometry = feature.getGeometry();
+                    if (geometry) {
+                        const extent = geometry.getExtent();
+                        const centerX = extent[0] + (extent[2] - extent[0]) / 2;
+                        const centerY = extent[1] + (extent[3] - extent[1]) / 2;
+                        const viewProjection = map.getView().getProjection();
+                        const lonLatCoords = ol.proj.transform([centerX, centerY], viewProjection, 'EPSG:4326');
+                        lon = lonLatCoords[0];
+                        lat = lonLatCoords[1];
+                    }
+                }
+
+                if (!lon || !lat) return null;
+
+                return new ol.style.Style({
+                    geometry: new ol.geom.Point(ol.proj.fromLonLat([parseFloat(lon), parseFloat(lat)])),
+                    text: new ol.style.Text({
+                        text: String(identifier),
+                        font: 'bold 10px monospace',
+                        fill: new ol.style.Fill({ color: 'rgba(0, 255, 204, 0.6)' }),
+                        stroke: new ol.style.Stroke({ color: 'rgba(0, 0, 0, 0.45)', width: 1 }),
+                        textAlign: 'center',
+                    }),
+                });
+            },
+        });
+
+        map.addLayer(layer);
+        map.addLayer(labelLayer);
+        layer.setVisible(false);
+        labelLayer.setVisible(false);
+
+        let currentUrl = null;
+
+        return {
+            setUrl: function(url) {
+                if (!url) {
+                    source.setUrl('');
+                    source.clear(true);
+                    layer.setVisible(false);
+                    labelLayer.setVisible(false);
+                    currentUrl = null;
+                    return;
+                }
+                source.setUrl(url);
+                currentUrl = url;
+                source.refresh();
+                layer.setVisible(true);
+                labelLayer.setVisible(true);
+            },
+            setVisible: function(visible) {
+                layer.setVisible(visible);
+                labelLayer.setVisible(visible);
+            },
+            clear: function() {
+                source.setUrl('');
+                source.clear(true);
+                layer.setVisible(false);
+                labelLayer.setVisible(false);
+                currentUrl = null;
+            },
+            setUrlAndVisible: function(url) {
+                if (!url) {
+                    this.clear();
+                    return;
+                }
+                source.setUrl(url);
+                currentUrl = url;
+                source.refresh();
+                layer.setVisible(true);
+                labelLayer.setVisible(true);
+            },
+            getLayer: function() {
+                return layer;
+            },
+        };
+    }
+
     window.MapShared = {
         WAYPOINT_POINT_MIN_ZOOM,
         WAYPOINT_LABEL_MIN_ZOOM,
@@ -377,6 +400,7 @@
         waypointPaletteForTheme,
         createWaypointPointStyle,
         createBaseMapKit,
+        OverlayLayer,
     };
 
 }(window));
