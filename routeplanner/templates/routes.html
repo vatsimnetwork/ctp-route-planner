@@ -427,35 +427,44 @@
                 <div id="tp-popup-body"></div>
             </div>
             <div id="map-controls">
-                <div class="control-header">Options</div>
-                <div class="form-check">
-                    <input type="checkbox" id="toggle-fir-lower" checked>
-                    <label for="toggle-fir-lower">Lower FIR</label>
+                <div class="control-header">
+                    <span>Options</span>
+                    <button type="button" class="control-collapse-toggle" id="map-controls-collapse" title="Collapse">&#9660;</button>
                 </div>
-                <div class="form-check">
-                    <input type="checkbox" id="toggle-fir-upper">
-                    <label for="toggle-fir-upper">Upper UIR</label>
+                <div class="control-body">
+                    <div class="form-check">
+                        <input type="checkbox" id="toggle-fir-lower" checked>
+                        <label for="toggle-fir-lower">Lower FIR</label>
+                    </div>
+                    <div class="form-check">
+                        <input type="checkbox" id="toggle-fir-upper">
+                        <label for="toggle-fir-upper">Upper UIR</label>
+                    </div>
+                    <div class="form-check">
+                        <input type="checkbox" id="toggle-waypoints">
+                        <label for="toggle-waypoints">Waypoints</label>
+                    </div>
+                    <div class="form-check">
+                        <input type="checkbox" id="toggle-user-colors">
+                        <label for="toggle-user-colors">User Route Colors</label>
+                    </div>
+                    <div class="form-check">
+                        <input type="checkbox" id="toggle-highlighted-waypoints" checked>
+                        <label for="toggle-highlighted-waypoints">Highlighted</label>
+                    </div>
+                    <div class="form-check">
+                        <input type="checkbox" id="toggle-throughput">
+                        <label for="toggle-throughput">Show Throughput</label>
+                    </div>
+                    <div class="form-check">
+                        <input type="checkbox" id="toggle-disabled-routes">
+                        <label for="toggle-disabled-routes">Show Disabled Routes</label>
+                    </div>
                 </div>
-                <div class="form-check">
-                    <input type="checkbox" id="toggle-waypoints">
-                    <label for="toggle-waypoints">Waypoints</label>
-                </div>
-                <div class="form-check">
-                    <input type="checkbox" id="toggle-user-colors">
-                    <label for="toggle-user-colors">User Route Colors</label>
-                </div>
-                <div class="form-check">
-                    <input type="checkbox" id="toggle-highlighted-waypoints" checked>
-                    <label for="toggle-highlighted-waypoints">Highlighted</label>
-                </div>
-                <div class="form-check">
-                    <input type="checkbox" id="toggle-throughput">
-                    <label for="toggle-throughput">Show Throughput</label>
-                </div>
-                <div class="form-check">
-                    <input type="checkbox" id="toggle-disabled-routes">
-                    <label for="toggle-disabled-routes">Show Disabled Routes</label>
-                </div>
+            </div>
+            <div id="map-view-controls">
+                <button type="button" class="map-fullscreen-btn" id="theater-mode-btn" title="Theater Mode">&#9638;</button>
+                <button type="button" class="map-fullscreen-btn" id="fullscreen-mode-btn" title="Fullscreen">&#9974;</button>
             </div>
         </div>
     </div>
@@ -1689,6 +1698,66 @@ window.addEventListener('storage', event => {
     }
 });
 
+(function() {
+    const mapControls = document.getElementById('map-controls');
+    const collapseBtn = document.getElementById('map-controls-collapse');
+    const theaterBtn = document.getElementById('theater-mode-btn');
+    const fullscreenBtn = document.getElementById('fullscreen-mode-btn');
+    const mapDiv = document.getElementById('map-div');
+
+    const COLLAPSED_KEY = 'ctp-routes-map-controls-collapsed';
+
+    const isCollapsed = localStorage.getItem(COLLAPSED_KEY) === 'true';
+    if (isCollapsed) {
+        mapControls.classList.add('collapsed');
+    }
+
+    collapseBtn.addEventListener('click', function() {
+        mapControls.classList.toggle('collapsed');
+        localStorage.setItem(COLLAPSED_KEY, mapControls.classList.contains('collapsed'));
+    });
+
+    let isTheaterMode = false;
+
+    theaterBtn.addEventListener('click', function() {
+        isTheaterMode = !isTheaterMode;
+        mapDiv.classList.toggle('theater-mode', isTheaterMode);
+        if (isTheaterMode && document.fullscreenElement) {
+            document.exitFullscreen();
+        }
+        mapDiv.classList.remove('fullscreen-mode');
+        if (map) {
+            setTimeout(function() { map.updateSize(); }, 0);
+        }
+    });
+
+    fullscreenBtn.addEventListener('click', function() {
+        if (!document.fullscreenElement) {
+            mapDiv.requestFullscreen().then(function() {
+                mapDiv.classList.add('fullscreen-mode');
+                mapDiv.classList.remove('theater-mode');
+                isTheaterMode = false;
+                if (map) {
+                    setTimeout(function() { map.updateSize(); }, 100);
+                }
+            }).catch(function(err) {
+                console.warn('Fullscreen request failed:', err);
+            });
+        } else {
+            document.exitFullscreen();
+        }
+    });
+
+    document.addEventListener('fullscreenchange', function() {
+        if (!document.fullscreenElement) {
+            mapDiv.classList.remove('fullscreen-mode');
+            if (map) {
+                setTimeout(function() { map.updateSize(); }, 100);
+            }
+        }
+    });
+})();
+
 scheduleVisibleRoutesPlot();
 </script>
 <style>
@@ -1706,6 +1775,17 @@ scheduleVisibleRoutesPlot();
     #map-canvas {
         width: 100%;
         height: 100%;
+    }
+    #map-div.theater-mode,
+    #map-div.fullscreen-mode {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        border: none;
+        border-radius: 0;
+        z-index: 2000;
     }
     @media (max-width: 1100px) {
         #map-div {

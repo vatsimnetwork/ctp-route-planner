@@ -10,12 +10,9 @@
     z-index: 1000;
     font-family: 'Courier New', monospace;
     font-size: 11px;
-}
-
-.control-header {
-    border-bottom: 1px dashed #64748b;
-    margin-bottom: 10px;
-    letter-spacing: 2px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
 }
 
 html[data-theme='dark'] #map-controls {
@@ -24,6 +21,107 @@ html[data-theme='dark'] #map-controls {
     border-color: #00ffcc;
 }
 
+#map-controls.collapsed .control-body {
+    display: none;
+}
+
+#map-controls.collapsed {
+    padding: 8px 10px;
+}
+
+.control-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    border-bottom: 1px dashed #64748b;
+    padding-bottom: 8px;
+}
+
 html[data-theme='dark'] .control-header {
     border-bottom-color: #00ffcc;
+}
+
+html[data-theme='dark'] #map-controls.collapsed .control-header {
+    border-bottom: none;
+    padding-bottom: 0;
+}
+
+.control-collapse-toggle {
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    font-size: 14px;
+    color: inherit;
+    transition: transform 150ms ease;
+}
+
+#map-controls.collapsed .control-collapse-toggle {
+    transform: rotate(-90deg);
+}
+
+html[data-theme='dark'] .control-collapse-toggle {
+    color: #00ffcc;
+}
+
+.control-body {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.control-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.control-row-right {
+    justify-content: flex-end;
+    padding-top: 4px;
+    border-top: 1px dashed rgba(100, 116, 139, 0.4);
+    margin-top: 2px;
+}
+
+.map-fullscreen-btn {
+    background: none;
+    border: none;
+    padding: 2px 4px;
+    cursor: pointer;
+    color: inherit;
+    font-size: 12px;
+    opacity: 0.7;
+}
+
+.map-fullscreen-btn:hover {
+    opacity: 1;
+}
+
+html[data-theme='dark'] .map-fullscreen-btn {
+    color: #00ffcc;
+}
+
+#map-div.theater-mode #map-controls,
+#map-div.fullscreen-mode #map-controls {
+    z-index: 2001;
+}
+
+#map-view-controls {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 1001;
+    display: flex;
+    flex-direction: row;
+    gap: 2px;
+    background: rgba(248, 250, 252, 0.9);
+    padding: 4px 6px;
+    border-radius: 4px;
+    border: 1px solid #cbd5e1;
+}
+
+html[data-theme='dark'] #map-view-controls {
+    background: rgba(10, 10, 10, 0.9);
+    border-color: #00ffcc;
 }
