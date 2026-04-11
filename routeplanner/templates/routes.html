@@ -44,6 +44,10 @@
         field-sizing: content !important;
     }
 
+    textarea.route-string-input[name="facilities"] {
+        min-width: 160px;
+    }
+
     #filter-bar input::placeholder {
         color: var(--muted-text);
         opacity: 1;
@@ -364,7 +368,7 @@
                             <span class="route-throughput-cell"></span>
                         </td>
                         <td><textarea class="form-control form-control-sm route-string-input" name="routestring" rows="1" {% if not has_write_access %}disabled{% endif %}>{{ route.routestring }}</textarea></td>
-                        <td><input type="text" class="form-control form-control-sm" name="facilities" value="{{ route.facilities }}" {% if not has_write_access %}disabled{% endif %}></td>
+                        <td><textarea class="form-control form-control-sm route-string-input" name="facilities" rows="1" {% if not has_write_access %}disabled{% endif %}>{{ route.facilities }}</textarea></td>
                         <td><input type="text" class="form-control form-control-sm" name="tags" value="{{ route.tags }}" {% if not has_write_access %}disabled{% endif %}></td>
                         <td>
                             <button type="button" class="btn btn-danger btn-sm" onclick="deleteRow(this)" {% if not has_write_access %}disabled style="display:none;"{% endif %}>Delete</button>
@@ -405,7 +409,7 @@
                             <span class="route-throughput-cell"></span>
                         </td>
                         <td><textarea class="form-control form-control-sm route-string-input" name="routestring" rows="1" {% if not has_write_access %}disabled{% endif %}>{{ route.routestring }}</textarea></td>
-                        <td><input type="text" class="form-control form-control-sm" name="facilities" value="{{ route.facilities }}" {% if not has_write_access %}disabled{% endif %}></td>
+                        <td><textarea class="form-control form-control-sm route-string-input" name="facilities" rows="1" {% if not has_write_access %}disabled{% endif %}>{{ route.facilities }}</textarea></td>
                         <td><input type="text" class="form-control form-control-sm" name="tags" value="{{ route.tags }}" {% if not has_write_access %}disabled{% endif %}></td>
                         <td>
                             <button type="button" class="btn btn-danger btn-sm" onclick="deleteRow(this)" {% if not has_write_access %}disabled style="display:none;"{% endif %}>Delete</button>
@@ -567,7 +571,7 @@ function createRowElement(rowState) {
             <span class="route-throughput-cell"></span>
         </td>
         <td><textarea class="form-control form-control-sm route-string-input" name="routestring" rows="1" ${disabledAttr}></textarea></td>
-        <td><input type="text" class="form-control form-control-sm" name="facilities" value="" ${disabledAttr}></td>
+        <td><textarea class="form-control form-control-sm route-string-input" name="facilities" rows="1" ${disabledAttr}></textarea></td>
         <td><input type="text" class="form-control form-control-sm" name="tags" value="" ${disabledAttr}></td>
         <td><button type="button" class="btn btn-danger btn-sm" onclick="deleteRow(this)" ${deleteButtonDisplay}>Delete</button></td>
     `;
@@ -575,7 +579,7 @@ function createRowElement(rowState) {
     tr.querySelector('input[name="identifier"]').value = rowState.identifier || '';
     tr.querySelector('input[name="group"]').value = rowState.group || '';
     tr.querySelector('[name="routestring"]').value = rowState.routestring || '';
-    tr.querySelector('input[name="facilities"]').value = rowState.facilities || '';
+    tr.querySelector('textarea[name="facilities"]').value = rowState.facilities || '';
     tr.querySelector('input[name="tags"]').value = rowState.tags || '';
     tr.querySelector('input[name="enabled"]').checked = rowState.enabled !== false;
     const color = rowState.color || '';
@@ -605,7 +609,7 @@ function isRowCompletelyEmpty(row) {
     const identifier = (row.querySelector('input[name="identifier"]')?.value || '').trim();
     const group = (row.querySelector('input[name="group"]')?.value || '').trim();
     const routestring = (row.querySelector('[name="routestring"]')?.value || '').trim();
-    const facilities = (row.querySelector('input[name="facilities"]')?.value || '').trim();
+    const facilities = (row.querySelector('textarea[name="facilities"]')?.value || '').trim();
     const tags = (row.querySelector('input[name="tags"]')?.value || '').trim();
     return !identifier && !group && !routestring && !facilities && !tags;
 }
@@ -668,7 +672,7 @@ function saveRoutesDraftToStorage() {
             color: getRowColor(row),
             enabled: isRouteEnabled(row),
             routestring: row.querySelector('[name="routestring"]').value || '',
-            facilities: row.querySelector('input[name="facilities"]').value || '',
+            facilities: row.querySelector('textarea[name="facilities"]').value || '',
             tags: row.querySelector('input[name="tags"]').value || '',
         }));
     const filterSearch = document.getElementById('filter-search').value || '';
@@ -772,7 +776,7 @@ function restoreRoutesDraftFromStorage() {
                 existingRow.querySelector('input[name="identifier"]').value = rowState.identifier || '';
                 existingRow.querySelector('input[name="group"]').value = rowState.group || '';
                 existingRow.querySelector('[name="routestring"]').value = rowState.routestring || '';
-                existingRow.querySelector('input[name="facilities"]').value = rowState.facilities || '';
+                existingRow.querySelector('textarea[name="facilities"]').value = rowState.facilities || '';
                 existingRow.querySelector('input[name="tags"]').value = rowState.tags || '';
                 existingRow.querySelector('input[name="enabled"]').checked = rowState.enabled !== false;
                 const wrap = existingRow.querySelector('.route-color-wrap');
@@ -1416,7 +1420,7 @@ function isRowChanged(row) {
     const identifier = row.querySelector('input[name="identifier"]').value.trim().toUpperCase();
     const group = row.querySelector('input[name="group"]').value.trim();
     const routestring = normalizeTokenField(row.querySelector('[name="routestring"]').value);
-    const facilities = normalizeTokenField(row.querySelector('input[name="facilities"]').value);
+    const facilities = normalizeTokenField(row.querySelector('textarea[name="facilities"]').value);
     const tags = normalizeTagsField(row.querySelector('input[name="tags"]').value);
     const color = getRowColor(row);
     const enabled = isRouteEnabled(row);
@@ -1455,7 +1459,7 @@ function saveAll() {
         const routeInput = row.querySelector('[name="routestring"]');
         const routestring = normalizeTokenField(sanitizeRouteField('routestring', routeInput.value)).toUpperCase();
         routeInput.value = routestring;
-        const facilitiesInput = row.querySelector('input[name="facilities"]');
+        const facilitiesInput = row.querySelector('textarea[name="facilities"]');
         const facilities = normalizeTokenField(sanitizeRouteField('facilities', facilitiesInput.value)).toUpperCase();
         facilitiesInput.value = facilities;
         const tagsInput = row.querySelector('input[name="tags"]');
@@ -1607,7 +1611,7 @@ function applyFilters() {
         const identifier = (row.querySelector('input[name="identifier"]').value || '').toLowerCase();
         const group = (row.querySelector('input[name="group"]').value || '').toLowerCase();
         const routestring = (row.querySelector('[name="routestring"]').value || '').toLowerCase();
-        const facilities = (row.querySelector('input[name="facilities"]').value || '').toLowerCase();
+        const facilities = (row.querySelector('textarea[name="facilities"]').value || '').toLowerCase();
         const tags = (row.querySelector('input[name="tags"]').value || '').toLowerCase();
         const throughput = (row.querySelector('.route-throughput-cell')?.textContent || '').toLowerCase();
 
@@ -1636,7 +1640,7 @@ function clearFilters() {
 
 function getNavigableFieldsForRow(row) {
     return Array.from(row.querySelectorAll(
-        'input[name="identifier"], input[name="group"], textarea[name="routestring"], input[name="facilities"], input[name="tags"]'
+        'input[name="identifier"], input[name="group"], textarea[name="routestring"], textarea[name="facilities"], input[name="tags"]'
     ));
 }
 
