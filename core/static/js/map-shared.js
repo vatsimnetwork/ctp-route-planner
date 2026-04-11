@@ -284,20 +284,24 @@
         };
     }
 
-    function OverlayLayer(map) {
+    function OverlayLayer(map, color) {
         const source = new ol.source.Vector({
             format: new ol.format.GeoJSON(),
         });
 
+        let currentColor = color || '#00ffcc';
+
         const layer = new ol.layer.Vector({
             source: source,
-            style: new ol.style.Style({
-                stroke: new ol.style.Stroke({
-                    color: '#00ffcc',
-                    width: 0.1,
-                    opacity: 0.5,
-                }),
-            }),
+            style: function() {
+                return new ol.style.Style({
+                    stroke: new ol.style.Stroke({
+                        color: currentColor,
+                        width: 0.1,
+                        opacity: 0.5,
+                    }),
+                });
+            },
             zIndex: 6,
         });
 
@@ -328,12 +332,16 @@
 
                 if (!lon || !lat) return null;
 
+                const fillColor = currentColor.startsWith('#') 
+                    ? currentColor + '99' 
+                    : 'rgba(0, 255, 204, 0.6)';
+
                 return new ol.style.Style({
                     geometry: new ol.geom.Point(ol.proj.fromLonLat([parseFloat(lon), parseFloat(lat)])),
                     text: new ol.style.Text({
                         text: String(identifier),
                         font: 'bold 10px monospace',
-                        fill: new ol.style.Fill({ color: 'rgba(0, 255, 204, 0.6)' }),
+                        fill: new ol.style.Fill({ color: fillColor }),
                         stroke: new ol.style.Stroke({ color: 'rgba(0, 0, 0, 0.45)', width: 1 }),
                         textAlign: 'center',
                     }),
@@ -363,6 +371,14 @@
                 source.refresh();
                 layer.setVisible(true);
                 labelLayer.setVisible(true);
+            },
+            setColor: function(color) {
+                currentColor = color || '#00ffcc';
+                layer.changed();
+                labelLayer.changed();
+            },
+            getColor: function() {
+                return currentColor;
             },
             setVisible: function(visible) {
                 layer.setVisible(visible);

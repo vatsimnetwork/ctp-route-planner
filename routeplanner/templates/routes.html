@@ -457,7 +457,10 @@
                         <label for="toggle-disabled-routes">Show Disabled Routes</label>
                     </div>
                     <div class="mt-2 pt-2" style="border-top: 1px solid var(--surface-border, #cbd5e1);">
-                        <div class="mb-2" style="font-size: 0.75rem; color: var(--muted-text); margin-bottom: 0.5rem;">Overlays</div>
+                        <div class="d-flex align-items-center mb-2" style="font-size: 0.75rem; color: var(--muted-text); margin-bottom: 0.5rem;">
+                            <span>Overlays</span>
+                            <input type="color" id="overlay-color" value="#00ffcc" title="Overlay color" style="width: 24px; height: 24px; padding: 0; border: none; margin-left: auto; cursor: pointer; background: transparent;">
+                        </div>
                         <select id="overlay-select-1" class="form-select form-select-sm mb-2" style="font-size: 0.8rem;">
                             <option value="">None</option>
                         </select>
@@ -979,8 +982,15 @@ routeLineSource = kit.routeLineSource;
 waypointSource = kit.waypointSource;
 addWaypoint = kit.addWaypoint;
 
-const overlayLayer1 = MapShared.OverlayLayer(map);
-const overlayLayer2 = MapShared.OverlayLayer(map);
+const overlayColorInput = document.getElementById('overlay-color');
+let overlayLayer1 = null;
+let overlayLayer2 = null;
+
+function initOverlayLayers(color) {
+    overlayLayer1 = MapShared.OverlayLayer(map, color);
+    overlayLayer2 = MapShared.OverlayLayer(map, color);
+    loadGeoJsonOverlays();
+}
 
 function loadGeoJsonOverlays() {
     fetch(GEOJSON_OVERLAYS_LIST_URL)
@@ -1019,15 +1029,19 @@ function applyOverlaySelections() {
     var overlays = window._geoJsonOverlaysCache || {};
     var id1 = select1.value;
     var id2 = select2.value;
-    if (id1 && overlays[id1]) {
-        overlayLayer1.setUrl(overlays[id1].url);
-    } else {
-        overlayLayer1.clear();
+    if (overlayLayer1) {
+        if (id1 && overlays[id1]) {
+            overlayLayer1.setUrl(overlays[id1].url);
+        } else {
+            overlayLayer1.clear();
+        }
     }
-    if (id2 && overlays[id2]) {
-        overlayLayer2.setUrl(overlays[id2].url);
-    } else {
-        overlayLayer2.clear();
+    if (overlayLayer2) {
+        if (id2 && overlays[id2]) {
+            overlayLayer2.setUrl(overlays[id2].url);
+        } else {
+            overlayLayer2.clear();
+        }
     }
     saveOverlaySelectionsToStorage();
 }
@@ -1035,16 +1049,34 @@ function applyOverlaySelections() {
 function saveOverlaySelectionsToStorage() {
     var select1 = document.getElementById('overlay-select-1');
     var select2 = document.getElementById('overlay-select-2');
+    var colorInput = document.getElementById('overlay-color');
     localStorage.setItem(OVERLAY_SELECTION_STORAGE_KEY, JSON.stringify({
         overlay1: select1.value,
-        overlay2: select2.value
+        overlay2: select2.value,
+        color: colorInput.value
     }));
+}
+
+function restoreOverlayColorFromStorage() {
+    try {
+        var stored = JSON.parse(localStorage.getItem(OVERLAY_SELECTION_STORAGE_KEY) || '{}');
+        if (stored.color) {
+            document.getElementById('overlay-color').value = stored.color;
+        }
+    } catch {}
 }
 
 document.getElementById('overlay-select-1').addEventListener('change', applyOverlaySelections);
 document.getElementById('overlay-select-2').addEventListener('change', applyOverlaySelections);
+document.getElementById('overlay-color').addEventListener('change', function() {
+    var color = this.value;
+    if (overlayLayer1) overlayLayer1.setColor(color);
+    if (overlayLayer2) overlayLayer2.setColor(color);
+    saveOverlaySelectionsToStorage();
+});
 
-loadGeoJsonOverlays();
+restoreOverlayColorFromStorage();
+initOverlayLayers(document.getElementById('overlay-color').value);
 
 const routeLineLayer = new ol.layer.Vector({
     source: routeLineSource,
