@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import requests
 
 from django.http import JsonResponse
 from django.shortcuts import render
@@ -186,6 +187,12 @@ def route_delete(request, identifier):
     try:
         api_client.batch_save_routes(event_id, updates=[], deletes=[route.api_id])
         api_client.create_route_revision(event_id)
+    except requests.HTTPError as e:
+        if e.response is not None and e.response.status_code == 409:
+            detail = e.response.json().get("message", str(e))
+            return JsonResponse({'error': detail}, status=409)
+        logger.exception("Failed to delete route via API")
+        return JsonResponse({'error': 'Failed to save to data API'}, status=503)
     except Exception:
         logger.exception("Failed to delete route via API")
         return JsonResponse({'error': 'Failed to save to data API'}, status=503)
@@ -326,6 +333,12 @@ def routes_save(request):
     try:
         api_client.batch_save_routes(event_id, updates=segment_updates, deletes=delete_ids)
         revision_number = api_client.create_route_revision(event_id)
+    except requests.HTTPError as e:
+        if e.response is not None and e.response.status_code == 409:
+            detail = e.response.json().get("message", str(e))
+            return JsonResponse({'error': detail}, status=409)
+        logger.exception("Failed to save routes via API")
+        return JsonResponse({'error': 'Failed to save to data API'}, status=503)
     except Exception:
         logger.exception("Failed to save routes via API")
         return JsonResponse({'error': 'Failed to save to data API'}, status=503)
