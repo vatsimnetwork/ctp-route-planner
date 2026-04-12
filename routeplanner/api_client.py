@@ -331,3 +331,44 @@ def delete_geojson_overlay(id):
     resp = requests.delete(_url(f'/geo-json-overlays/{id}'), headers=_headers(), timeout=_TIMEOUT)
     resp.raise_for_status()
     return resp.json()
+
+
+def get_event_with_slots(event_id):
+    resp = requests.get(
+        _url(f'/events/{event_id}/simulator-data/latest-with-slots'),
+        headers=_headers(),
+        timeout=_TIMEOUT,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def get_slots_window(event_id):
+    resp = requests.get(
+        _url(f'/events/{event_id}/slots/window'),
+        headers=_headers(),
+        timeout=_TIMEOUT,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def get_slot_positions_at(event_id, timestamp_iso):
+    resp = requests.get(
+        _url(f'/events/{event_id}/slot-positions'),
+        headers=_headers(),
+        params={'timestamp': timestamp_iso},
+        timeout=_TIMEOUT,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def get_all_slot_positions(event_id):
+    resp = requests.get(
+        _url(f'/events/{event_id}/slot-positions/all'),
+        headers=_headers(),
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()

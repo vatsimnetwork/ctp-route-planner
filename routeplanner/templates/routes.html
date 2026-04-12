@@ -295,6 +295,59 @@
         font-style: italic;
         margin-bottom: 2px;
     }
+
+    /* Traffic playback controls */
+    .traffic-section .traffic-controls-inner { display: none; }
+    .traffic-section.active .traffic-controls-inner { display: block; }
+    .traffic-mode-toggle {
+        display: inline-flex;
+        border: 1px solid var(--surface-border, #cbd5e1);
+        border-radius: 4px;
+        overflow: hidden;
+        font-size: 0.72rem;
+    }
+    .traffic-mode-toggle label {
+        padding: 2px 8px;
+        cursor: pointer;
+        user-select: none;
+        background: transparent;
+        color: var(--text-color, #111);
+        margin: 0;
+    }
+    .traffic-mode-toggle input[type="radio"] { display: none; }
+    .traffic-mode-toggle input[type="radio"]:checked + label {
+        background: var(--primary, #3b82f6);
+        color: #fff;
+    }
+    #traffic-snapshot-controls, #traffic-scrubber-controls { margin-top: 6px; }
+    #traffic-snapshot-controls input[type="datetime-local"],
+    #traffic-scrubber-controls input[type="range"] {
+        width: 100%;
+        font-size: 0.75rem;
+    }
+    #traffic-scrubber-controls input[type="range"] {
+        accent-color: var(--primary, #3b82f6);
+    }
+    .traffic-status {
+        font-size: 0.7rem;
+        color: var(--muted-text, #94a3b8);
+        margin-top: 4px;
+    }
+    .traffic-ts-label {
+        font-size: 0.7rem;
+        color: var(--muted-text, #94a3b8);
+        font-variant-numeric: tabular-nums;
+    }
+    .traffic-play-btn {
+        font-size: 0.7rem;
+        padding: 1px 8px;
+        border: 1px solid var(--surface-border, #cbd5e1);
+        border-radius: 3px;
+        background: transparent;
+        color: var(--text-color, #111);
+        cursor: pointer;
+    }
+    .traffic-play-btn:hover { background: var(--surface-border, #e2e8f0); }
 </style>
 
 <div class="container-fluid routes-page" data-write-access="{{ has_write_access|yesno:'true,false' }}">
@@ -423,6 +476,7 @@
 
         <div id="map-div" class="routes-map-panel">
             <div id="map-canvas"></div>
+            <div id="aircraft-tooltip" style="background:#1e293b;color:#e5e7eb;padding:3px 7px;border-radius:4px;font:11px sans-serif;white-space:nowrap;pointer-events:none;"></div>
             <div id="throughput-popup">
                 <div class="tp-popup-header">
                     <span id="tp-popup-fix-name"></span>
@@ -468,6 +522,30 @@
                             <option value="">None</option>
                         </select>
                     </div>
+                    <div id="traffic-section" class="traffic-section mt-2 pt-2" style="border-top: 1px solid var(--surface-border, #cbd5e1);">
+                        <div class="d-flex align-items-center mb-1" style="font-size: 0.75rem; color: var(--muted-text);">
+                            <span>Traffic Playback</span>
+                        </div>
+                        <div class="traffic-controls-inner">
+                            <div class="traffic-mode-toggle">
+                                <input type="radio" name="traffic-mode" id="traffic-mode-snapshot" value="snapshot" checked>
+                                <label for="traffic-mode-snapshot">Snapshot</label>
+                                <input type="radio" name="traffic-mode" id="traffic-mode-scrubber" value="scrubber">
+                                <label for="traffic-mode-scrubber">Scrubber</label>
+                            </div>
+                            <div id="traffic-snapshot-controls">
+                                <input type="datetime-local" id="traffic-timestamp" step="60">
+                            </div>
+                            <div id="traffic-scrubber-controls" style="display:none;">
+                                <input type="range" id="traffic-slider" min="0" max="0" step="1" value="0">
+                                <div class="d-flex align-items-center gap-2 mt-1">
+                                    <button type="button" class="traffic-play-btn" id="traffic-play-btn">&#9654; Play</button>
+                                    <span class="traffic-ts-label" id="traffic-slider-label"></span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="traffic-status" id="traffic-status">Loading traffic data…</div>
+                    </div>
                 </div>
             </div>
             <div id="map-view-controls">
@@ -494,6 +572,9 @@ const GET_WAYPOINTS_BASE_URL = '{% url "waypoints_geojson" %}';
 const GET_HIGHLIGHTED_WAYPOINTS_URL = '{% url "highlighted_waypoints_geojson" %}';
 const THROUGHPUT_URL = '{% url "throughput_data" %}';
 const GEOJSON_OVERLAYS_LIST_URL = '{% url "geojson_overlays_list" %}';
+const TRAFFIC_WINDOW_URL = '{% url "traffic_window" %}';
+const TRAFFIC_SNAPSHOT_URL = '{% url "traffic_snapshot" %}';
+const TRAFFIC_ALL_URL = '{% url "traffic_all" %}';
 const ROUTES_DRAFT_STORAGE_KEY = 'ctp-routes-draft-v2';
 const ROUTES_UI_STORAGE_KEY = 'ctp-routes-ui-v1';
 const MAP_OPTIONS_STORAGE_KEY = 'ctp-routes-map-options-v1';
@@ -1142,6 +1223,347 @@ const throughputLabelLayer = new ol.layer.Vector({
     },
 });
 map.addLayer(throughputLabelLayer);
+
+// ---------------------------------------------------------------------------
+// Traffic playback — aircraft layer + snapshot / scrubber logic
+// ---------------------------------------------------------------------------
+const PLANE_SVG_SRC = (function() {
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20">' +
+        '<path d="M10 1 L12 7 L19 9.5 L12 11 L12.5 16 L15 18.5 L15 19.5 L10 17 ' +
+        'L5 19.5 L5 18.5 L7.5 16 L8 11 L1 9.5 L8 7 Z" ' +
+        'fill="#22d3ee" stroke="#0f172a" stroke-width="0.7"/></svg>';
+    return 'data:image/svg+xml,' + encodeURIComponent(svg);
+})();
+
+function computeBearing(lat1, lon1, lat2, lon2) {
+    var toRad = Math.PI / 180;
+    var dLon = (lon2 - lon1) * toRad;
+    var y = Math.sin(dLon) * Math.cos(lat2 * toRad);
+    var x = Math.cos(lat1 * toRad) * Math.sin(lat2 * toRad) -
+            Math.sin(lat1 * toRad) * Math.cos(lat2 * toRad) * Math.cos(dLon);
+    return Math.atan2(y, x);
+}
+
+const aircraftSource = new ol.source.Vector();
+const aircraftLayer = new ol.layer.Vector({
+    source: aircraftSource,
+    zIndex: 20,
+    style: function(feature) {
+        return new ol.style.Style({
+            image: new ol.style.Icon({
+                src: PLANE_SVG_SRC,
+                scale: 0.9,
+                rotation: feature.get('heading') || 0,
+                rotateWithView: false,
+                anchor: [0.5, 0.5],
+            }),
+        });
+    },
+});
+map.addLayer(aircraftLayer);
+
+const aircraftTooltipEl = document.getElementById('aircraft-tooltip');
+const aircraftTooltip = new ol.Overlay({
+    element: aircraftTooltipEl,
+    positioning: 'bottom-center',
+    offset: [0, -16],
+    stopEvent: false,
+});
+map.addOverlay(aircraftTooltip);
+
+map.on('pointermove', function(evt) {
+    if (evt.dragging) { aircraftTooltip.setPosition(undefined); return; }
+    const hit = map.forEachFeatureAtPixel(evt.pixel, function(feature, layer) {
+        if (layer === aircraftLayer) return feature;
+    });
+    if (hit) {
+        aircraftTooltipEl.textContent = hit.get('label') || '';
+        aircraftTooltip.setPosition(evt.coordinate);
+        map.getTargetElement().style.cursor = 'pointer';
+    } else {
+        aircraftTooltip.setPosition(undefined);
+        map.getTargetElement().style.cursor = '';
+    }
+});
+
+let trafficWindow = null;  // { eventId, startTime, endTime, slotCount, startMs, endMs }
+let allPositionsCache = null;  // indexed data for scrubber mode
+let scrubberPlaying = false;
+let scrubberInterval = null;
+let snapshotDebounce = null;
+
+function renderAircraft(points) {
+    aircraftSource.clear();
+    if (!points || !points.length) {
+        document.getElementById('traffic-status').textContent = '0 aircraft in flight';
+        return;
+    }
+    points.forEach(function(p) {
+        const f = new ol.Feature({
+            geometry: new ol.geom.Point(ol.proj.fromLonLat([p.longitude, p.latitude])),
+            label: (p.departureAirport || '') + '→' + (p.arrivalAirport || ''),
+            slotId: p.slotId,
+            heading: p.heading || 0,
+        });
+        aircraftSource.addFeature(f);
+    });
+    document.getElementById('traffic-status').textContent = points.length + ' aircraft in flight';
+}
+
+function toUTCIso(d) {
+    return d.toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
+
+function toLocalInputValue(d) {
+    var off = d.getTimezoneOffset();
+    var local = new Date(d.getTime() - off * 60000);
+    return local.toISOString().slice(0, 16);
+}
+
+function fromLocalInputValue(str) {
+    return new Date(str);
+}
+
+function fetchSnapshot(tsDate) {
+    var iso = toUTCIso(tsDate);
+    document.getElementById('traffic-status').textContent = 'Loading…';
+    console.log('[Traffic] snapshot fetch:', iso);
+    fetch(TRAFFIC_SNAPSHOT_URL + '?timestamp=' + encodeURIComponent(iso))
+        .then(function(r) {
+            console.log('[Traffic] snapshot response status:', r.status, r.headers.get('content-type'));
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+        })
+        .then(function(data) {
+            console.log('[Traffic] snapshot parsed:', typeof data, Array.isArray(data) ? ('array[' + data.length + ']') : data);
+            // Go nil slice marshals to JSON null — treat as empty array
+            if (data === null || data === undefined) data = [];
+            if (Array.isArray(data)) {
+                if (data.length > 0) console.log('[Traffic] snapshot first item:', JSON.stringify(data[0]));
+                renderAircraft(data);
+            } else {
+                console.warn('[Traffic] snapshot unexpected type:', data);
+                renderAircraft([]);
+            }
+        })
+        .catch(function(err) {
+            console.error('[Traffic] snapshot error:', err);
+            document.getElementById('traffic-status').textContent = 'Snapshot error: ' + err.message;
+        });
+}
+
+function initTrafficSection() {
+    var section = document.getElementById('traffic-section');
+    fetch(TRAFFIC_WINDOW_URL)
+        .then(function(r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+        })
+        .then(function(data) {
+            console.log('[Traffic] window data:', JSON.stringify(data));
+            if (!data.slotCount || !data.startTime || !data.endTime) {
+                section.style.display = 'none'; return;
+            }
+            var startMs = new Date(data.startTime).getTime();
+            var endMs = new Date(data.endTime).getTime();
+            if (isNaN(startMs) || isNaN(endMs) || endMs <= startMs) {
+                section.style.display = 'none'; return;
+            }
+
+            trafficWindow = {
+                eventId: data.eventId,
+                startTime: data.startTime,
+                endTime: data.endTime,
+                slotCount: data.slotCount,
+                startMs: startMs,
+                endMs: endMs,
+            };
+
+            section.classList.add('active');
+
+            var tsInput = document.getElementById('traffic-timestamp');
+            var startDate = new Date(startMs);
+            var endDate = new Date(endMs);
+            tsInput.min = toLocalInputValue(startDate);
+            tsInput.max = toLocalInputValue(endDate);
+            var midDate = new Date(startMs + (endMs - startMs) / 2);
+            tsInput.value = toLocalInputValue(midDate);
+
+            // Slider setup
+            var totalSteps = Math.floor((endMs - startMs) / 120000);
+            var slider = document.getElementById('traffic-slider');
+            slider.max = totalSteps;
+            slider.value = Math.floor(totalSteps / 2);
+
+            // Initial snapshot fetch
+            fetchSnapshot(midDate);
+        })
+        .catch(function(err) {
+            console.error('traffic window error:', err);
+            section.style.display = 'none';
+        });
+}
+
+// Snapshot mode: debounced fetch on datetime change
+document.getElementById('traffic-timestamp').addEventListener('change', function() {
+    if (!trafficWindow) return;
+    var d = fromLocalInputValue(this.value);
+    if (isNaN(d.getTime())) return;
+    // Clamp
+    if (d.getTime() < trafficWindow.startMs) d = new Date(trafficWindow.startMs);
+    if (d.getTime() > trafficWindow.endMs) d = new Date(trafficWindow.endMs);
+    clearTimeout(snapshotDebounce);
+    snapshotDebounce = setTimeout(function() { fetchSnapshot(d); }, 250);
+});
+
+// Mode toggle
+document.querySelectorAll('input[name="traffic-mode"]').forEach(function(radio) {
+    radio.addEventListener('change', function() {
+        var mode = this.value;
+        document.getElementById('traffic-snapshot-controls').style.display = mode === 'snapshot' ? '' : 'none';
+        document.getElementById('traffic-scrubber-controls').style.display = mode === 'scrubber' ? '' : 'none';
+
+        // Stop playback when switching
+        stopPlayback();
+
+        if (mode === 'snapshot') {
+            allPositionsCache = null;
+            var tsInput = document.getElementById('traffic-timestamp');
+            var d = fromLocalInputValue(tsInput.value);
+            if (!isNaN(d.getTime())) fetchSnapshot(d);
+        } else if (mode === 'scrubber') {
+            loadAllPositions();
+        }
+    });
+});
+
+function loadAllPositions() {
+    if (allPositionsCache) { scrubberRender(); return; }
+    document.getElementById('traffic-status').textContent = 'Preloading all positions…';
+    document.getElementById('traffic-slider').disabled = true;
+    document.getElementById('traffic-play-btn').disabled = true;
+
+    fetch(TRAFFIC_ALL_URL)
+        .then(function(r) {
+            console.log('[Traffic] all response status:', r.status, r.headers.get('content-type'));
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+        })
+        .then(function(data) {
+            // Go nil slice marshals to JSON null — treat as empty array
+            if (data === null || data === undefined) data = [];
+            console.log('[Traffic] all parsed:', typeof data, Array.isArray(data) ? ('array[' + data.length + ']') : data);
+            if (!Array.isArray(data)) {
+                document.getElementById('traffic-status').textContent = 'Failed to load positions';
+                // Fall back to snapshot mode
+                document.getElementById('traffic-mode-snapshot').checked = true;
+                document.getElementById('traffic-mode-snapshot').dispatchEvent(new Event('change'));
+                return;
+            }
+            var withPositions = data.filter(function(s) { return s.positions && s.positions.length > 0; }).length;
+            console.log('[Traffic] slots:', data.length, 'with position data:', withPositions);
+            if (data.length > 0) console.log('[Traffic] first slot sample:', JSON.stringify(data[0]).substring(0, 300));
+
+            allPositionsCache = data.map(function(slot) {
+                var positions = (slot.positions || []).map(function(p) {
+                    return { ms: new Date(p.timestamp).getTime(), lat: p.latitude, lon: p.longitude };
+                }).sort(function(a, b) { return a.ms - b.ms; });
+                return {
+                    slotId: slot.slotId,
+                    departureAirport: slot.departureAirport,
+                    arrivalAirport: slot.arrivalAirport,
+                    departureMs: new Date(slot.departureTime).getTime(),
+                    arrivalMs: new Date(slot.arrivalTime).getTime(),
+                    positions: positions,
+                };
+            });
+            document.getElementById('traffic-slider').disabled = false;
+            document.getElementById('traffic-play-btn').disabled = false;
+            scrubberRender();
+        })
+        .catch(function(err) {
+            console.error('[Traffic] all error:', err);
+            document.getElementById('traffic-status').textContent = 'Failed to load: ' + err.message;
+            document.getElementById('traffic-mode-snapshot').checked = true;
+            document.getElementById('traffic-mode-snapshot').dispatchEvent(new Event('change'));
+        });
+}
+
+function scrubberRender() {
+    if (!trafficWindow || !allPositionsCache) return;
+    var slider = document.getElementById('traffic-slider');
+    var stepValue = parseInt(slider.value, 10);
+    var bucketMs = trafficWindow.startMs + stepValue * 120000;
+    var bucketDate = new Date(bucketMs);
+    document.getElementById('traffic-slider-label').textContent = bucketDate.toISOString().replace('T', ' ').replace(/\.\d+Z$/, 'Z');
+
+    var points = [];
+    var debugSkipTime = 0, debugSkipPos = 0;
+    allPositionsCache.forEach(function(slot) {
+        if (slot.departureMs > bucketMs || slot.arrivalMs < bucketMs) { debugSkipTime++; return; }
+        if (!slot.positions.length) { debugSkipPos++; return; }
+        // Find closest position to bucketMs
+        var bestIdx = 0;
+        var bestDiff = Math.abs(slot.positions[0].ms - bucketMs);
+        for (var i = 1; i < slot.positions.length; i++) {
+            var diff = Math.abs(slot.positions[i].ms - bucketMs);
+            if (diff < bestDiff) { bestIdx = i; bestDiff = diff; }
+        }
+        var best = slot.positions[bestIdx];
+        // Compute heading from consecutive positions
+        var heading = 0;
+        if (slot.positions.length > 1) {
+            var a, b;
+            if (bestIdx < slot.positions.length - 1) {
+                a = slot.positions[bestIdx]; b = slot.positions[bestIdx + 1];
+            } else {
+                a = slot.positions[bestIdx - 1]; b = slot.positions[bestIdx];
+            }
+            heading = computeBearing(a.lat, a.lon, b.lat, b.lon);
+        }
+        points.push({
+            slotId: slot.slotId,
+            departureAirport: slot.departureAirport,
+            arrivalAirport: slot.arrivalAirport,
+            latitude: best.lat,
+            longitude: best.lon,
+            heading: heading,
+        });
+    });
+    console.log('[Traffic] scrubber: bucket=' + bucketDate.toISOString()
+        + ' total=' + allPositionsCache.length
+        + ' skipTime=' + debugSkipTime
+        + ' skipNoPos=' + debugSkipPos
+        + ' matched=' + points.length);
+    renderAircraft(points);
+}
+
+document.getElementById('traffic-slider').addEventListener('input', function() {
+    scrubberRender();
+});
+
+function stopPlayback() {
+    scrubberPlaying = false;
+    if (scrubberInterval) { clearInterval(scrubberInterval); scrubberInterval = null; }
+    document.getElementById('traffic-play-btn').innerHTML = '&#9654; Play';
+}
+
+document.getElementById('traffic-play-btn').addEventListener('click', function() {
+    if (scrubberPlaying) { stopPlayback(); return; }
+    scrubberPlaying = true;
+    this.innerHTML = '&#9646;&#9646; Pause';
+    var slider = document.getElementById('traffic-slider');
+    var maxVal = parseInt(slider.max, 10);
+    scrubberInterval = setInterval(function() {
+        var cur = parseInt(slider.value, 10);
+        if (cur >= maxVal) { stopPlayback(); return; }
+        slider.value = cur + 1;
+        scrubberRender();
+    }, 500);
+});
+
+// Initialize on page load
+initTrafficSection();
 
 const throughputOverlay = new ol.Overlay({
     element: document.getElementById('throughput-popup'),

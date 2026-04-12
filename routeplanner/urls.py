@@ -7,7 +7,7 @@ from .views.home import home
 from .views.routeplotter import index, waypoints_geojson, plot_route, throughput_data
 from .views.highlightedwaypoints import highlighted_waypoints, highlighted_waypoint_create, highlighted_waypoint_delete, highlighted_waypoints_geojson
 from .views.setting import waypoint_settings, import_waypoints, delete_all_waypoints, geojson_overlay_settings, geojson_overlay_add, geojson_overlay_delete, geojson_overlays_list, airway_settings, import_airway_segments, delete_all_airways, migration_settings, run_migration
-from .views.routes import route_delete, routes, routes_save
+from .views.routes import route_delete, routes, routes_save, traffic_window, traffic_snapshot, traffic_all
 from .views.customfixes import custom_fixes, custom_fix_create, custom_fix_delete
 
 @require_POST
@@ -43,6 +43,9 @@ urlpatterns = [
     path('routes/', routes, name='routes'),
     path('routes/save/', routes_save, name='routes_save'),
     path('routes/delete/<str:identifier>/', route_delete, name='route_delete'),
+    path('routes/traffic/window/', traffic_window, name='traffic_window'),
+    path('routes/traffic/snapshot/', traffic_snapshot, name='traffic_snapshot'),
+    path('routes/traffic/all/', traffic_all, name='traffic_all'),
     path('settings/airways/', airway_settings, name='airways_settings'),
     path('settings/airways/import/', import_airway_segments, name='import_airways'),
     path('settings/airways/deleteall/', delete_all_airways, name='delete_all_airways'),

@@ -1,6 +1,8 @@
 import json
 import logging
 import re
+from datetime import datetime
+
 import requests
 
 from django.http import JsonResponse
@@ -346,3 +348,49 @@ def routes_save(request):
     if saved_routes:
         notify_routes_changed(f"saved {len(saved_routes)} route(s)")
     return JsonResponse({'success': True, 'saved_routes': saved_routes, 'revision_number': revision_number})
+
+
+def traffic_window(request):
+    try:
+        event_id = _get_current_event_id()
+        data = api_client.get_slots_window(event_id)
+    except (ValueError, requests.HTTPError, requests.RequestException):
+        return JsonResponse({'eventId': None, 'startTime': None, 'endTime': None, 'slotCount': 0})
+
+    return JsonResponse({
+        'eventId': data.get('eventId', event_id),
+        'startTime': data.get('startTime'),
+        'endTime': data.get('endTime'),
+        'slotCount': data.get('slotCount', 0),
+    })
+
+
+def traffic_snapshot(request):
+    ts_str = request.GET.get('timestamp', '')
+    if not ts_str:
+        return JsonResponse({'error': 'timestamp query parameter required'}, status=400)
+
+    try:
+        datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
+    except (ValueError, TypeError):
+        return JsonResponse({'error': 'invalid timestamp format'}, status=400)
+
+    try:
+        event_id = _get_current_event_id()
+        data = api_client.get_slot_positions_at(event_id, ts_str)
+    except (ValueError, requests.HTTPError, requests.RequestException) as exc:
+        logger.exception("traffic_snapshot failed")
+        return JsonResponse({'error': str(exc)}, status=502)
+
+    return JsonResponse(data, safe=False)
+
+
+def traffic_all(request):
+    try:
+        event_id = _get_current_event_id()
+        data = api_client.get_all_slot_positions(event_id)
+    except (ValueError, requests.HTTPError, requests.RequestException) as exc:
+        logger.exception("traffic_all failed")
+        return JsonResponse({'error': str(exc)}, status=502)
+
+    return JsonResponse(data, safe=False)
