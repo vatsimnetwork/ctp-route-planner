@@ -297,35 +297,10 @@
     }
 
     /* Traffic playback controls */
-    .traffic-section .traffic-controls-inner { display: none; }
-    .traffic-section.active .traffic-controls-inner { display: block; }
-    .traffic-mode-toggle {
-        display: inline-flex;
-        border: 1px solid var(--surface-border, #cbd5e1);
-        border-radius: 4px;
-        overflow: hidden;
-        font-size: 0.72rem;
-    }
-    .traffic-mode-toggle label {
-        padding: 2px 8px;
-        cursor: pointer;
-        user-select: none;
-        background: transparent;
-        color: var(--text-color, #111);
-        margin: 0;
-    }
-    .traffic-mode-toggle input[type="radio"] { display: none; }
-    .traffic-mode-toggle input[type="radio"]:checked + label {
-        background: var(--primary, #3b82f6);
-        color: #fff;
-    }
-    #traffic-snapshot-controls, #traffic-scrubber-controls { margin-top: 6px; }
-    #traffic-snapshot-controls input[type="datetime-local"],
+    #traffic-scrubber-controls { margin-top: 6px; }
     #traffic-scrubber-controls input[type="range"] {
         width: 100%;
         font-size: 0.75rem;
-    }
-    #traffic-scrubber-controls input[type="range"] {
         accent-color: var(--primary, #3b82f6);
     }
     .traffic-status {
@@ -523,28 +498,18 @@
                         </select>
                     </div>
                     <div id="traffic-section" class="traffic-section mt-2 pt-2" style="border-top: 1px solid var(--surface-border, #cbd5e1);">
-                        <div class="d-flex align-items-center mb-1" style="font-size: 0.75rem; color: var(--muted-text);">
-                            <span>Traffic Playback</span>
+                        <div class="form-check">
+                            <input type="checkbox" id="toggle-traffic-playback">
+                            <label for="toggle-traffic-playback">Traffic Playback</label>
                         </div>
-                        <div class="traffic-controls-inner">
-                            <div class="traffic-mode-toggle">
-                                <input type="radio" name="traffic-mode" id="traffic-mode-snapshot" value="snapshot" checked>
-                                <label for="traffic-mode-snapshot">Snapshot</label>
-                                <input type="radio" name="traffic-mode" id="traffic-mode-scrubber" value="scrubber">
-                                <label for="traffic-mode-scrubber">Scrubber</label>
+                        <div id="traffic-scrubber-controls" style="display:none;">
+                            <input type="range" id="traffic-slider" min="0" max="0" step="1" value="0">
+                            <div class="d-flex align-items-center gap-2 mt-1">
+                                <button type="button" class="traffic-play-btn" id="traffic-play-btn">&#9654; Play</button>
+                                <span class="traffic-ts-label" id="traffic-slider-label"></span>
                             </div>
-                            <div id="traffic-snapshot-controls">
-                                <input type="datetime-local" id="traffic-timestamp" step="60">
-                            </div>
-                            <div id="traffic-scrubber-controls" style="display:none;">
-                                <input type="range" id="traffic-slider" min="0" max="0" step="1" value="0">
-                                <div class="d-flex align-items-center gap-2 mt-1">
-                                    <button type="button" class="traffic-play-btn" id="traffic-play-btn">&#9654; Play</button>
-                                    <span class="traffic-ts-label" id="traffic-slider-label"></span>
-                                </div>
-                            </div>
+                            <div class="traffic-status" id="traffic-status"></div>
                         </div>
-                        <div class="traffic-status" id="traffic-status">Loading traffic data…</div>
                     </div>
                 </div>
             </div>
@@ -573,7 +538,6 @@ const GET_HIGHLIGHTED_WAYPOINTS_URL = '{% url "highlighted_waypoints_geojson" %}
 const THROUGHPUT_URL = '{% url "throughput_data" %}';
 const GEOJSON_OVERLAYS_LIST_URL = '{% url "geojson_overlays_list" %}';
 const TRAFFIC_WINDOW_URL = '{% url "traffic_window" %}';
-const TRAFFIC_SNAPSHOT_URL = '{% url "traffic_snapshot" %}';
 const TRAFFIC_ALL_URL = '{% url "traffic_all" %}';
 const ROUTES_DRAFT_STORAGE_KEY = 'ctp-routes-draft-v2';
 const ROUTES_UI_STORAGE_KEY = 'ctp-routes-ui-v1';
@@ -1225,7 +1189,7 @@ const throughputLabelLayer = new ol.layer.Vector({
 map.addLayer(throughputLabelLayer);
 
 // ---------------------------------------------------------------------------
-// Traffic playback — aircraft layer + snapshot / scrubber logic
+// Traffic playback — aircraft layer + scrubber logic
 // ---------------------------------------------------------------------------
 const PLANE_SVG_SRC = (function() {
     var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20">' +
@@ -1287,10 +1251,9 @@ map.on('pointermove', function(evt) {
 });
 
 let trafficWindow = null;  // { eventId, startTime, endTime, slotCount, startMs, endMs }
-let allPositionsCache = null;  // indexed data for scrubber mode
+let allPositionsCache = null;
 let scrubberPlaying = false;
 let scrubberInterval = null;
-let snapshotDebounce = null;
 
 function renderAircraft(points) {
     aircraftSource.clear();
@@ -1314,53 +1277,15 @@ function toUTCIso(d) {
     return d.toISOString().replace(/\.\d{3}Z$/, 'Z');
 }
 
-function toLocalInputValue(d) {
-    var off = d.getTimezoneOffset();
-    var local = new Date(d.getTime() - off * 60000);
-    return local.toISOString().slice(0, 16);
-}
-
-function fromLocalInputValue(str) {
-    return new Date(str);
-}
-
-function fetchSnapshot(tsDate) {
-    var iso = toUTCIso(tsDate);
-    document.getElementById('traffic-status').textContent = 'Loading…';
-    console.log('[Traffic] snapshot fetch:', iso);
-    fetch(TRAFFIC_SNAPSHOT_URL + '?timestamp=' + encodeURIComponent(iso))
-        .then(function(r) {
-            console.log('[Traffic] snapshot response status:', r.status, r.headers.get('content-type'));
-            if (!r.ok) throw new Error('HTTP ' + r.status);
-            return r.json();
-        })
-        .then(function(data) {
-            console.log('[Traffic] snapshot parsed:', typeof data, Array.isArray(data) ? ('array[' + data.length + ']') : data);
-            // Go nil slice marshals to JSON null — treat as empty array
-            if (data === null || data === undefined) data = [];
-            if (Array.isArray(data)) {
-                if (data.length > 0) console.log('[Traffic] snapshot first item:', JSON.stringify(data[0]));
-                renderAircraft(data);
-            } else {
-                console.warn('[Traffic] snapshot unexpected type:', data);
-                renderAircraft([]);
-            }
-        })
-        .catch(function(err) {
-            console.error('[Traffic] snapshot error:', err);
-            document.getElementById('traffic-status').textContent = 'Snapshot error: ' + err.message;
-        });
-}
-
 function initTrafficSection() {
     var section = document.getElementById('traffic-section');
+    var checkbox = document.getElementById('toggle-traffic-playback');
     fetch(TRAFFIC_WINDOW_URL)
         .then(function(r) {
             if (!r.ok) throw new Error('HTTP ' + r.status);
             return r.json();
         })
         .then(function(data) {
-            console.log('[Traffic] window data:', JSON.stringify(data));
             if (!data.slotCount || !data.startTime || !data.endTime) {
                 section.style.display = 'none'; return;
             }
@@ -1379,24 +1304,11 @@ function initTrafficSection() {
                 endMs: endMs,
             };
 
-            section.classList.add('active');
-
-            var tsInput = document.getElementById('traffic-timestamp');
-            var startDate = new Date(startMs);
-            var endDate = new Date(endMs);
-            tsInput.min = toLocalInputValue(startDate);
-            tsInput.max = toLocalInputValue(endDate);
-            var midDate = new Date(startMs + (endMs - startMs) / 2);
-            tsInput.value = toLocalInputValue(midDate);
-
             // Slider setup
             var totalSteps = Math.floor((endMs - startMs) / 120000);
             var slider = document.getElementById('traffic-slider');
             slider.max = totalSteps;
             slider.value = Math.floor(totalSteps / 2);
-
-            // Initial snapshot fetch
-            fetchSnapshot(midDate);
         })
         .catch(function(err) {
             console.error('traffic window error:', err);
@@ -1404,37 +1316,20 @@ function initTrafficSection() {
         });
 }
 
-// Snapshot mode: debounced fetch on datetime change
-document.getElementById('traffic-timestamp').addEventListener('change', function() {
-    if (!trafficWindow) return;
-    var d = fromLocalInputValue(this.value);
-    if (isNaN(d.getTime())) return;
-    // Clamp
-    if (d.getTime() < trafficWindow.startMs) d = new Date(trafficWindow.startMs);
-    if (d.getTime() > trafficWindow.endMs) d = new Date(trafficWindow.endMs);
-    clearTimeout(snapshotDebounce);
-    snapshotDebounce = setTimeout(function() { fetchSnapshot(d); }, 250);
-});
-
-// Mode toggle
-document.querySelectorAll('input[name="traffic-mode"]').forEach(function(radio) {
-    radio.addEventListener('change', function() {
-        var mode = this.value;
-        document.getElementById('traffic-snapshot-controls').style.display = mode === 'snapshot' ? '' : 'none';
-        document.getElementById('traffic-scrubber-controls').style.display = mode === 'scrubber' ? '' : 'none';
-
-        // Stop playback when switching
+// Checkbox toggles traffic playback — not persisted in localStorage
+document.getElementById('toggle-traffic-playback').addEventListener('change', function() {
+    var controls = document.getElementById('traffic-scrubber-controls');
+    if (this.checked) {
+        controls.style.display = '';
+        if (!trafficWindow) return;
+        loadAllPositions();
+    } else {
+        controls.style.display = 'none';
         stopPlayback();
-
-        if (mode === 'snapshot') {
-            allPositionsCache = null;
-            var tsInput = document.getElementById('traffic-timestamp');
-            var d = fromLocalInputValue(tsInput.value);
-            if (!isNaN(d.getTime())) fetchSnapshot(d);
-        } else if (mode === 'scrubber') {
-            loadAllPositions();
-        }
-    });
+        aircraftSource.clear();
+        allPositionsCache = null;
+        document.getElementById('traffic-status').textContent = '';
+    }
 });
 
 function loadAllPositions() {
@@ -1455,9 +1350,8 @@ function loadAllPositions() {
             console.log('[Traffic] all parsed:', typeof data, Array.isArray(data) ? ('array[' + data.length + ']') : data);
             if (!Array.isArray(data)) {
                 document.getElementById('traffic-status').textContent = 'Failed to load positions';
-                // Fall back to snapshot mode
-                document.getElementById('traffic-mode-snapshot').checked = true;
-                document.getElementById('traffic-mode-snapshot').dispatchEvent(new Event('change'));
+                document.getElementById('toggle-traffic-playback').checked = false;
+                document.getElementById('traffic-scrubber-controls').style.display = 'none';
                 return;
             }
             var withPositions = data.filter(function(s) { return s.positions && s.positions.length > 0; }).length;
@@ -1484,8 +1378,6 @@ function loadAllPositions() {
         .catch(function(err) {
             console.error('[Traffic] all error:', err);
             document.getElementById('traffic-status').textContent = 'Failed to load: ' + err.message;
-            document.getElementById('traffic-mode-snapshot').checked = true;
-            document.getElementById('traffic-mode-snapshot').dispatchEvent(new Event('change'));
         });
 }
 
