@@ -195,6 +195,14 @@ def get_latest_slot_revision(event_id):
     return resp.json()
 
 
+def get_slot_draft_entries(revision_id):
+    resp = requests.get(_url(f'/slot-revisions/{revision_id}/draft-entries'), headers=_headers(), timeout=_TIMEOUT)
+    if resp.status_code == 404:
+        return []
+    resp.raise_for_status()
+    return resp.json()
+
+
 def batch_save_routes(event_id, updates, deletes):
     for seg in updates:
         seg['eventId'] = event_id

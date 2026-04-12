@@ -464,21 +464,18 @@ def throughput_data(request):
         if not revision:
             return JsonResponse({'segments': {}})
 
-        draft_str = revision.get('slotPlannerDraftCommentary', '')
-        if not draft_str:
+        entries = api_client.get_slot_draft_entries(revision['id'])
+        if not entries:
             return JsonResponse({'segments': {}})
-
-        draft = json.loads(draft_str)
-        slot_groups = draft.get('slotGroups', [])
 
         all_routes = api_client.list_routes(event_id)
         id_to_identifier = {r.api_id: r.identifier for r in all_routes}
 
         segment_totals = {}
-        for group in slot_groups:
-            value = group.get('value', 0)
+        for entry in entries:
+            value = entry.get('slotCount', 0) or entry.get('value', 0)
             for key in ('depRouteId', 'trackId', 'arrRouteId'):
-                seg_id = group.get(key)
+                seg_id = entry.get(key)
                 if seg_id:
                     segment_totals[seg_id] = segment_totals.get(seg_id, 0) + value
 
