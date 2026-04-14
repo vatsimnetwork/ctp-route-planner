@@ -30,9 +30,6 @@ AUTH_INTERNAL_URL=http://auth-panel:8000
 AUTH_PUBLIC_URL=https://auth.example.com
 INTERNAL_API_KEY=your_internal_api_key
 APP_URL=http://localhost:8000
-
-# Optional: if set, each route change sends a CSV to this webhook
-DISCORD_ROUTES_WEBHOOK_URL=
 ```
 
 ## Run with Docker

@@ -539,7 +539,6 @@ const THROUGHPUT_URL = '{% url "throughput_data" %}';
 const GEOJSON_OVERLAYS_LIST_URL = '{% url "geojson_overlays_list" %}';
 const TRAFFIC_WINDOW_URL = '{% url "traffic_window" %}';
 const TRAFFIC_ALL_URL = '{% url "traffic_all" %}';
-const ROUTES_DRAFT_STORAGE_KEY = 'ctp-routes-draft-v2';
 const ROUTES_UI_STORAGE_KEY = 'ctp-routes-ui-v1';
 const MAP_OPTIONS_STORAGE_KEY = 'ctp-routes-map-options-v1';
 const OVERLAY_SELECTION_STORAGE_KEY = 'ctp-routes-overlay-selection-v1';
@@ -547,7 +546,6 @@ const MAP_OPTION_IDS = ['toggle-waypoints','toggle-user-colors','toggle-highligh
 const HAS_WRITE_ACCESS = {{ has_write_access|yesno:'true,false' }};
 let routePlotRequestController = null;
 let routePlotDebounceTimer = null;
-let isApplyingStoredDraft = false;
 
 // Restore map option checkboxes from localStorage before map init so that
 // layers pick up the persisted state when they read checkbox values.
@@ -649,7 +647,6 @@ function clearRouteColor(btn) {
     const wrap = btn.closest('.route-color-wrap');
     if (wrap) wrap.dataset.active = 'false';
     ensureTrailingEmptyRow();
-    saveRoutesDraftToStorage();
     scheduleVisibleRoutesPlot();
 }
 
@@ -698,37 +695,8 @@ function ensureTrailingEmptyRow() {
 }
 
 
-function saveRoutesDraftToStorage() {
-    if (isApplyingStoredDraft) {
-        return;
-    }
-    const rows = getRouteRows();
-    const changedRows = rows
-        .filter(row => isRowChanged(row))
-        .map(row => ({
-            pk: row.dataset.pk || '',
-            originalPk: row.dataset.originalPk || '',
-            originalGroup: row.dataset.originalGroup || '',
-            originalRoutestring: row.dataset.originalRoutestring || '',
-            originalFacilities: row.dataset.originalFacilities || '',
-            originalTags: normalizeTagsField(row.dataset.originalTags || ''),
-            originalColor: row.dataset.originalColor || '',
-            originalEnabled: row.dataset.originalEnabled !== 'false',
-            isNew: row.dataset.isNew === 'true',
-            identifier: row.querySelector('input[name="identifier"]').value || '',
-            group: row.querySelector('input[name="group"]').value || '',
-            color: getRowColor(row),
-            enabled: isRouteEnabled(row),
-            routestring: row.querySelector('[name="routestring"]').value || '',
-            facilities: row.querySelector('textarea[name="facilities"]').value || '',
-            tags: row.querySelector('input[name="tags"]').value || '',
-        }));
-    const filterSearch = document.getElementById('filter-search').value || '';
-    if (!changedRows.length && !filterSearch) {
-        localStorage.removeItem(ROUTES_DRAFT_STORAGE_KEY);
-        return;
-    }
-    localStorage.setItem(ROUTES_DRAFT_STORAGE_KEY, JSON.stringify({ changedRows, filterSearch }));
+function hasUnsavedRouteChanges() {
+    return getRouteRows().some(row => isRowChanged(row));
 }
 
 function saveMapOptionsToStorage() {
@@ -790,63 +758,9 @@ function refreshMapSize() {
     });
 }
 
-function restoreRoutesDraftFromStorage() {
-    const raw = localStorage.getItem(ROUTES_DRAFT_STORAGE_KEY);
-    if (!raw) {
-        return false;
-    }
-
-    let stored;
-    try {
-        stored = JSON.parse(raw);
-    } catch {
-        localStorage.removeItem(ROUTES_DRAFT_STORAGE_KEY);
-        return false;
-    }
-
-    const changedRows = stored.changedRows;
-    if (!Array.isArray(changedRows) || (!changedRows.length && !stored.filterSearch)) {
-        localStorage.removeItem(ROUTES_DRAFT_STORAGE_KEY);
-        return false;
-    }
-
-    isApplyingStoredDraft = true;
-    try {
-        const enabledTbody = document.getElementById('routes-enabled-tbody');
-
-        for (const rowState of changedRows) {
-            if (rowState.isNew) {
-                enabledTbody.appendChild(createRowElement(rowState));
-            } else {
-                // Merge edits into the server-rendered row, if it still exists.
-                const existingRow = document.querySelector(`tr.route-row[data-original-pk="${CSS.escape(rowState.originalPk)}"]`);
-                if (!existingRow) continue;
-                existingRow.querySelector('input[name="identifier"]').value = rowState.identifier || '';
-                existingRow.querySelector('input[name="group"]').value = rowState.group || '';
-                existingRow.querySelector('[name="routestring"]').value = rowState.routestring || '';
-                existingRow.querySelector('textarea[name="facilities"]').value = rowState.facilities || '';
-                existingRow.querySelector('input[name="tags"]').value = rowState.tags || '';
-                existingRow.querySelector('input[name="enabled"]').checked = rowState.enabled !== false;
-                const wrap = existingRow.querySelector('.route-color-wrap');
-                if (wrap) {
-                    wrap.dataset.active = rowState.color ? 'true' : 'false';
-                    if (rowState.color) existingRow.querySelector('input[name="color"]').value = rowState.color;
-                }
-                moveRowToSection(existingRow);
-            }
-        }
-
-        if (typeof stored.filterSearch === 'string') {
-            document.getElementById('filter-search').value = stored.filterSearch;
-        }
-        getRouteRows().forEach(moveRowToSection);
-        applyFilters();
-    } finally {
-        isApplyingStoredDraft = false;
-    }
-
-    return true;
-}
+// Best-effort cleanup of any drafts left by prior versions of this page.
+try { localStorage.removeItem('ctp-routes-draft-v2'); } catch {}
+try { localStorage.removeItem('ctp-routes-draft-v3'); } catch {}
 
 function restoreUiStateFromSessionStorage() {
     const raw = sessionStorage.getItem(ROUTES_UI_STORAGE_KEY);
@@ -876,7 +790,6 @@ function toggleTable() {
     toggleButton.textContent = nowHidden ? 'Show Table' : 'Hide Table';
     refreshMapSize();
     saveUiStateToSessionStorage();
-    saveRoutesDraftToStorage();
     scheduleVisibleRoutesPlot();
 }
 
@@ -896,7 +809,6 @@ function showMap()
     toggleButton.textContent = nowVisible ? 'Hide Map' : 'Show Map';
     refreshMapSize();
     saveUiStateToSessionStorage();
-    saveRoutesDraftToStorage();
     scheduleVisibleRoutesPlot();
 }
 
@@ -1705,7 +1617,6 @@ function addRow() {
     tbody.appendChild(tr);
     ensureTrailingEmptyRow();
     tr.querySelector('input[name="identifier"]').focus();
-    saveRoutesDraftToStorage();
     scheduleVisibleRoutesPlot();
 }
 
@@ -1718,7 +1629,6 @@ async function deleteRow(btn) {
     if (!row.dataset.originalPk) {
         row.remove();
         ensureTrailingEmptyRow();
-        saveRoutesDraftToStorage();
         applyFilters();
         scheduleVisibleRoutesPlot();
         return;
@@ -1734,6 +1644,7 @@ async function deleteRow(btn) {
                 'X-CSRFToken': CSRF_TOKEN,
             },
             body: JSON.stringify({
+                api_id: parseInt(row.dataset.apiId || '0', 10) || 0,
                 original: {
                     pk: row.dataset.originalPk,
                     group: row.dataset.originalGroup,
@@ -1754,7 +1665,6 @@ async function deleteRow(btn) {
         row.remove();
         ensureTrailingEmptyRow();
         showAlert('Route deleted successfully.', 'success');
-        saveRoutesDraftToStorage();
         scheduleVisibleRoutesPlot();
     } catch (error) {
         btn.disabled = false;
@@ -1856,7 +1766,7 @@ function saveAll() {
             if (typeof result.revision_number !== 'undefined') {
                 document.getElementById('current-revision-number').textContent = result.revision_number;
             }
-            localStorage.removeItem(ROUTES_DRAFT_STORAGE_KEY);
+            suppressUnloadPrompt = true;
             showAlert(`Routes saved successfully. Revision set ${result.revision_number}.`, 'success');
             window.location.reload();
         } else {
@@ -1894,7 +1804,6 @@ routesTableWrap.addEventListener('input', event => {
         }
     }
     ensureTrailingEmptyRow();
-    saveRoutesDraftToStorage();
     applyFilters();
     scheduleVisibleRoutesPlot();
 });
@@ -1919,7 +1828,6 @@ routesTableWrap.addEventListener('change', event => {
         }
     }
     ensureTrailingEmptyRow();
-    saveRoutesDraftToStorage();
     applyFilters();
     scheduleVisibleRoutesPlot();
 });
@@ -1980,7 +1888,6 @@ function applyFilters() {
 
 function clearFilters() {
     document.getElementById('filter-search').value = '';
-    saveRoutesDraftToStorage();
     applyFilters();
 }
 
@@ -2040,7 +1947,6 @@ function moveTableFocus(currentField, rowOffset, columnOffset) {
 }
 
 document.getElementById('filter-search').addEventListener('input', () => {
-    saveRoutesDraftToStorage();
     applyFilters();
 });
 
@@ -2070,24 +1976,18 @@ routesTableWrap.addEventListener('keydown', event => {
     }
 });
 
-restoreRoutesDraftFromStorage();
 if (HAS_WRITE_ACCESS) {
     ensureTrailingEmptyRow();
 }
 restoreUiStateFromSessionStorage();
-window.addEventListener('storage', event => {
-    if (event.key === ROUTES_DRAFT_STORAGE_KEY) {
-        const restored = restoreRoutesDraftFromStorage();
 
-        // If a draft is deleted in another window (e.g. after save), clear plotted lines here.
-        if (!restored) {
-            clearRoutePlot();
-            return;
-        }
-
-        refreshMapSize();
-        plotVisibleRoutesOnMap();
-    }
+let suppressUnloadPrompt = false;
+window.addEventListener('beforeunload', event => {
+    if (suppressUnloadPrompt) return;
+    if (!HAS_WRITE_ACCESS) return;
+    if (!hasUnsavedRouteChanges()) return;
+    event.preventDefault();
+    event.returnValue = '';
 });
 
 (function() {
