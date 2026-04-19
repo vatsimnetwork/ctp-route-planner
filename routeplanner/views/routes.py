@@ -206,6 +206,8 @@ def route_delete(request, identifier):
         if e.response is not None and e.response.status_code == 409:
             detail = e.response.json().get("message", str(e))
             return JsonResponse({'error': detail}, status=409)
+        if e.response is not None and e.response.status_code == 423:
+            return JsonResponse({'error': 'Route modifications are currently locked by an administrator.'}, status=423)
         logger.exception("Failed to delete route via API")
         return JsonResponse({'error': 'Failed to save to data API'}, status=503)
     except Exception:
@@ -356,6 +358,8 @@ def routes_save(request):
         if e.response is not None and e.response.status_code == 409:
             detail = e.response.json().get("message", str(e))
             return JsonResponse({'error': detail}, status=409)
+        if e.response is not None and e.response.status_code == 423:
+            return JsonResponse({'error': 'Route modifications are currently locked by an administrator.'}, status=423)
         logger.exception("Failed to save routes via API")
         return JsonResponse({'error': 'Failed to save to data API'}, status=503)
     except Exception:
