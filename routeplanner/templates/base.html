@@ -155,9 +155,13 @@
 <body>
     <nav class="navbar navbar-expand-lg app-navbar">
         <div class="container">
+            {% if request.is_session_valid %}
             <a class="navbar-brand" href="/">
                 <h4>CTP Route Planner</h4>
             </a>
+            {% else %}
+            <h4>CTP Funny Stats</h4>
+            {% endif %}
 
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
                 <span class="navbar-toggler-icon"></span>
@@ -203,8 +207,7 @@
                         </li>
 
 
-                    {% else %}
-                        <li class="nav-item"><a class="nav-link fw-bold text-primary" href="{% url 'login' %}">Login</a></li>
+                    
                     {% endif %}
                 </ul>
             </div>

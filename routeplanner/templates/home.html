@@ -1,5 +1,327 @@
 {% extends 'base.html' %}
 
 {% block content %}
-moin servus moin
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+<div class="container mt-5">
+    <!-- Header -->
+    <h2 class="mb-4">Some interesting facts about the event right now</h2>
+    
+    <!-- First Row: General Statistics -->
+    <div class="row mb-4">
+        <div class="col-md-6 col-lg-3 mb-3">
+            <div class="card h-100">
+                <div class="card-body text-center">
+                    <h5 class="card-title">
+                        <span class="title-icon title-icon-blue" aria-hidden="true"><i class="bi bi-airplane-fill"></i></span>
+                        Pilots Online
+                    </h5>
+                    <p class="card-text display-4 text-primary">{{ stats.global_online }}</p>
+                    <small class="text-muted">Global</small>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-6 col-lg-3 mb-3">
+            <div class="card h-100">
+                <div class="card-body text-center">
+                    <h5 class="card-title">
+                        <span class="title-icon title-icon-green" aria-hidden="true"><i class="bi bi-signpost-2-fill"></i></span>
+                        Atlantic Swimmers
+                    </h5>
+                    <p class="card-text display-4 text-success">{{ stats.atlantik_schwimmer_count }}</p>
+                    <small class="text-muted">In Water (Sea-Level)</small>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6 col-lg-3 mb-3">
+            <div class="card h-100">
+                <div class="card-body text-center">
+                    <h5 class="card-title">
+                        <span class="title-icon title-icon-mint" aria-hidden="true"><i class="bi bi-globe-americas"></i></span>
+                        Atlantic Route Flights
+                    </h5>
+                    <p class="card-text display-4 text-info">{{ stats.atlantik_route_count }}</p>
+                    <small class="text-muted">Oceanic Airspace + Atlantic Waypoint</small>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6 col-lg-3 mb-3">
+            <div class="card h-100">
+                <div class="card-body text-center">
+                    <h5 class="card-title">
+                        <span class="title-icon title-icon-orange" aria-hidden="true"><i class="bi bi-map"></i></span>
+                        Planned Oceanic Flights
+                    </h5>
+                    <p class="card-text display-4 text-warning">{{ stats.planned_oceanic_flights_count }}</p>
+                    <small class="text-muted">All Phases (Before/During/After Crossing)</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Second Row: Atlantic Statistics Detail -->
+    {% if stats.atlantik_details %}
+    <div class="row mb-4">
+        <!-- Fastest -->
+        <div class="col-md-6 col-lg-3 mb-3">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">
+                        <span class="title-icon title-icon-blue" aria-hidden="true"><i class="bi bi-lightning-charge-fill"></i></span>
+                        Fastest
+                    </h5>
+                    {% if stats.atlantik_details.schnellster.callsign and stats.atlantik_details.schnellster.pilot %}
+                        <p class="card-text">
+                            <a class="track-link" href="https://vatsim-radar.com/?pilot={{ stats.atlantik_details.schnellster.pilot }}" target="_blank" rel="noopener noreferrer">
+                                <strong>{{ stats.atlantik_details.schnellster.callsign }}</strong>
+                                <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i>
+                            </a>
+                        </p>
+                        <p class="card-text">
+                            <span class="badge bg-primary">{{ stats.atlantik_details.schnellster.gs }} kts</span>
+                        </p>
+                    {% else %}
+                        <p class="card-text text-muted">No Data</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Slowest -->
+        <div class="col-md-6 col-lg-3 mb-3">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">
+                        <span class="title-icon title-icon-orange" aria-hidden="true"><i class="bi bi-hourglass-split"></i></span>
+                        Slowest
+                    </h5>
+                    {% if stats.atlantik_details.langsamster.callsign and stats.atlantik_details.langsamster.pilot %}
+                        <p class="card-text">
+                            <a class="track-link" href="https://vatsim-radar.com/?pilot={{ stats.atlantik_details.langsamster.pilot }}" target="_blank" rel="noopener noreferrer">
+                                <strong>{{ stats.atlantik_details.langsamster.callsign }}</strong>
+                                <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i>
+                            </a>
+                        </p>
+                        <p class="card-text">
+                            <span class="badge bg-warning">{{ stats.atlantik_details.langsamster.gs }} kts</span>
+                        </p>
+                    {% else %}
+                        <p class="card-text text-muted">No Data</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Highest -->
+        <div class="col-md-6 col-lg-3 mb-3">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">
+                        <span class="title-icon title-icon-mint" aria-hidden="true"><i class="bi bi-arrow-up-circle-fill"></i></span>
+                        Highest
+                    </h5>
+                    {% if stats.atlantik_details.am_hoechsten.callsign and stats.atlantik_details.am_hoechsten.pilot %}
+                        <p class="card-text">
+                            <a class="track-link" href="https://vatsim-radar.com/?pilot={{ stats.atlantik_details.am_hoechsten.pilot }}" target="_blank" rel="noopener noreferrer">
+                                <strong>{{ stats.atlantik_details.am_hoechsten.callsign }}</strong>
+                                <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i>
+                            </a>
+                        </p>
+                        <p class="card-text">
+                            <span class="badge bg-info">{{ stats.atlantik_details.am_hoechsten.alt }} ft</span>
+                        </p>
+                    {% else %}
+                        <p class="card-text text-muted">No Data</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Lowest -->
+        <div class="col-md-6 col-lg-3 mb-3">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">
+                        <span class="title-icon title-icon-gray" aria-hidden="true"><i class="bi bi-arrow-down-circle-fill"></i></span>
+                        Lowest
+                    </h5>
+                    {% if stats.atlantik_details.am_niedrigsten.callsign and stats.atlantik_details.am_niedrigsten.pilot %}
+                        <p class="card-text">
+                            <a class="track-link" href="https://vatsim-radar.com/?pilot={{ stats.atlantik_details.am_niedrigsten.pilot }}" target="_blank" rel="noopener noreferrer">
+                                <strong>{{ stats.atlantik_details.am_niedrigsten.callsign }}</strong>
+                                <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i>
+                            </a>
+                        </p>
+                        <p class="card-text">
+                            <span class="badge bg-secondary">{{ stats.atlantik_details.am_niedrigsten.alt }} ft</span>
+                        </p>
+                    {% else %}
+                        <p class="card-text text-muted">No Data</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Third Row: Duration Record & Aircraft Types -->
+    <div class="row mb-4">
+        <!-- Duration Record -->
+        <div class="col-md-6 col-lg-3 mb-3">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">
+                        <span class="title-icon title-icon-pink" aria-hidden="true"><i class="bi bi-stopwatch-fill"></i></span>
+                        Longest Flight
+                    </h5>
+                    {% if stats.atlantik_details.dauer_rekord.callsign and stats.atlantik_details.dauer_rekord.pilot %}
+                        <p class="card-text">
+                            <a class="track-link" href="https://vatsim-radar.com/?pilot={{ stats.atlantik_details.dauer_rekord.pilot }}" target="_blank" rel="noopener noreferrer">
+                                <strong>{{ stats.atlantik_details.dauer_rekord.callsign }}</strong>
+                                <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i>
+                            </a>
+                        </p>
+                        <p class="card-text">
+                            <span class="badge bg-danger">{{ stats.atlantik_details.dauer_rekord.stunden }}h</span>
+                        </p>
+                    {% else %}
+                        <p class="card-text text-muted">No Data</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Aircraft Types -->
+        <div class="col-md-6 col-lg-9 mb-3">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">
+                        <span class="title-icon title-icon-green" aria-hidden="true"><i class="bi bi-collection-fill"></i></span>
+                        Aircraft Types in Use
+                    </h5>
+                    {% if stats.atlantik_details.flugzeug_typen %}
+                        <div class="d-flex flex-wrap gap-2">
+                            {% for aircraft, count in stats.atlantik_details.flugzeug_typen.items %}
+                                <span class="badge bg-light text-dark border">{{ aircraft }}: {{ count }}</span>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <p class="card-text text-muted">No Data</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<style>
+    .card {
+        border: 1px solid var(--surface-border);
+        background: var(--surface-bg);
+        color: var(--text-color);
+        box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+        transition: transform 0.2s, box-shadow 0.2s, background-color 180ms ease, color 180ms ease, border-color 180ms ease;
+    }
+    
+    .card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+    }
+    
+    .card-title {
+        display: flex;
+        align-items: center;
+        gap: 0.65rem;
+        color: var(--text-color);
+        font-weight: 600;
+    }
+
+    .title-icon {
+        width: 2rem;
+        height: 2rem;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 0.65rem;
+        font-size: 1.2rem;
+        line-height: 1;
+        flex-shrink: 0;
+    }
+
+    .title-icon-blue {
+        color: #4458e9;
+        background: rgba(68, 88, 233, 0.14);
+    }
+
+    .title-icon-orange {
+        color: #ee7422;
+        background: rgba(238, 116, 34, 0.14);
+    }
+
+    .title-icon-green {
+        color: #1fb45d;
+        background: rgba(31, 180, 93, 0.14);
+    }
+
+    .title-icon-mint {
+        color: #10b4c8;
+        background: rgba(16, 180, 200, 0.16);
+    }
+
+    .title-icon-gray {
+        color: #768296;
+        background: rgba(118, 130, 150, 0.16);
+    }
+
+    .title-icon-pink {
+        color: #c10f61;
+        background: rgba(193, 15, 97, 0.14);
+    }
+    
+    .card-text {
+        color: var(--text-color);
+    }
+
+    .track-link {
+        color: var(--text-color);
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        font-weight: 600;
+    }
+
+    .track-link:hover {
+        text-decoration: underline;
+        color: var(--vatsim-blue);
+    }
+    
+    .text-muted {
+        color: var(--muted-text) !important;
+    }
+    
+    .display-4 {
+        font-weight: bold;
+        margin: 10px 0;
+        color: var(--text-color);
+    }
+    
+    h2 {
+        color: var(--text-color);
+    }
+    
+    .badge.bg-warning {
+        color: #000 !important;
+    }
+    
+    .badge.bg-primary {
+        color: #fff !important;
+    }
+    
+    .badge.bg-info {
+        color: #000 !important;
+    }
+</style>
 {% endblock %}
