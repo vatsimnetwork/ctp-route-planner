@@ -1932,7 +1932,6 @@ function expandConnectedRoutes(seedRows, allRows, mode) {
 
 function onConnectedModeChange() {
     localStorage.setItem(CONNECTED_ROUTES_MODE_KEY, document.getElementById('connected-routes-mode').value);
-    saveRoutesDraftToStorage();
     applyFilters();
 }
 
