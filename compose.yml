@@ -44,7 +44,6 @@ services:
       AUTH_PUBLIC_URL: ${AUTH_PUBLIC_URL}
       INTERNAL_API_KEY: ${INTERNAL_API_KEY}
       APP_URL: ${APP_URL}
-      DISCORD_ROUTES_WEBHOOK_URL: ${DISCORD_ROUTES_WEBHOOK_URL}
     env_file:
       - .env
     networks:

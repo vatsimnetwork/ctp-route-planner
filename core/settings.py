@@ -141,8 +141,6 @@ STORAGES = {
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-DISCORD_ROUTES_WEBHOOK_URL = os.environ.get('DISCORD_ROUTES_WEBHOOK_URL', '')
-
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 if not DEBUG:
