@@ -296,6 +296,16 @@
         margin-bottom: 2px;
     }
 
+    /* Rows that are shown due to route connectivity (not a direct filter match) */
+    tr.route-row--connected {
+        border-left: 3px solid #f59e0b;
+        background-color: rgba(245, 158, 11, 0.06) !important;
+    }
+    html[data-theme='dark'] tr.route-row--connected {
+        border-left: 3px solid #d97706;
+        background-color: rgba(217, 119, 6, 0.1) !important;
+    }
+
     /* Traffic playback controls */
     #traffic-scrubber-controls { margin-top: 6px; }
     #traffic-scrubber-controls input[type="range"] {
@@ -335,7 +345,7 @@
     <div id="alert-container"></div>
     <div id="plot-warning-container" class="alert alert-warning py-2 mb-3" style="display:none;"></div>
 
-    <div id="filter-bar" class="d-flex gap-2 mb-3">
+    <div id="filter-bar" class="d-flex gap-2 mb-3 flex-wrap align-items-center">
         <input
             type="text"
             id="filter-search"
@@ -344,7 +354,15 @@
             style="max-width:340px"
             oninput="applyFilters()"
         >
-        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="clearFilters()">Clear</button>      
+        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="clearFilters()">Clear</button>
+        <div class="d-flex align-items-center gap-1" title="Show routes whose waypoints connect (recursively) to the filtered results">
+            <label for="connected-routes-mode" class="form-label mb-0 text-nowrap" style="font-size:0.85rem;">Connected Routes:</label>
+            <select id="connected-routes-mode" class="form-select form-select-sm" style="width:auto;font-size:0.85rem;" onchange="onConnectedModeChange()">
+                <option value="disabled">Disabled</option>
+                <option value="adjacent">First Adjacent</option>
+                <option value="recursive">Fully Recursive</option>
+            </select>
+        </div>
         <button type="button" id="table-toggle-btn" class="btn btn-outline-secondary btn-sm" onclick="toggleTable()">Hide Table</button>
         <button type="button" id="map-toggle-btn" class="btn btn-outline-secondary btn-sm" onclick="showMap()">Show Map</button>
     </div>
@@ -543,6 +561,7 @@ const ROUTES_DRAFT_STORAGE_KEY = 'ctp-routes-draft-v2';
 const ROUTES_UI_STORAGE_KEY = 'ctp-routes-ui-v1';
 const MAP_OPTIONS_STORAGE_KEY = 'ctp-routes-map-options-v1';
 const OVERLAY_SELECTION_STORAGE_KEY = 'ctp-routes-overlay-selection-v1';
+const CONNECTED_ROUTES_MODE_KEY = 'ctp-routes-connected-mode-v1';
 const MAP_OPTION_IDS = ['toggle-waypoints','toggle-user-colors','toggle-highlighted-waypoints','toggle-throughput','toggle-disabled-routes'];
 const HAS_WRITE_ACCESS = {{ has_write_access|yesno:'true,false' }};
 let routePlotRequestController = null;
@@ -724,11 +743,12 @@ function saveRoutesDraftToStorage() {
             tags: row.querySelector('input[name="tags"]').value || '',
         }));
     const filterSearch = document.getElementById('filter-search').value || '';
-    if (!changedRows.length && !filterSearch) {
+    const connectedMode = document.getElementById('connected-routes-mode')?.value || 'disabled';
+    if (!changedRows.length && !filterSearch && connectedMode === 'disabled') {
         localStorage.removeItem(ROUTES_DRAFT_STORAGE_KEY);
         return;
     }
-    localStorage.setItem(ROUTES_DRAFT_STORAGE_KEY, JSON.stringify({ changedRows, filterSearch }));
+    localStorage.setItem(ROUTES_DRAFT_STORAGE_KEY, JSON.stringify({ changedRows, filterSearch, connectedMode }));
 }
 
 function saveMapOptionsToStorage() {
@@ -838,6 +858,10 @@ function restoreRoutesDraftFromStorage() {
 
         if (typeof stored.filterSearch === 'string') {
             document.getElementById('filter-search').value = stored.filterSearch;
+        }
+        if (typeof stored.connectedMode === 'string') {
+            const sel = document.getElementById('connected-routes-mode');
+            if (sel) sel.value = stored.connectedMode;
         }
         getRouteRows().forEach(moveRowToSection);
         applyFilters();
@@ -1924,6 +1948,104 @@ routesTableWrap.addEventListener('change', event => {
     scheduleVisibleRoutesPlot();
 });
 
+// ---------------------------------------------------------------------------
+// Connected Routes helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns the first and last waypoint tokens of a route string.
+ * A waypoint token is the first or last space-separated word.
+ * Returns { first, last } or null if the route string has fewer than 1 token.
+ */
+function routeEndpoints(routestring) {
+    const tokens = (routestring || '').trim().toUpperCase().split(/\s+/).filter(Boolean);
+    if (!tokens.length) return null;
+    return { first: tokens[0], last: tokens[tokens.length - 1] };
+}
+
+/**
+ * Given the set of directly-matched rows, expand to include connected rows.
+ * mode: 'adjacent' (one hop) or 'recursive' (all reachable).
+ * Returns a Set of rows that should be visible (including the seed rows).
+ */
+function expandConnectedRoutes(seedRows, allRows, mode) {
+    const visible = new Set(seedRows);
+
+    // Build an index: token -> [rows that start or end at that token]
+    const tokenIndex = new Map(); // token (uppercase) -> Set<row>
+    allRows.forEach(row => {
+        const rs = (row.querySelector('[name="routestring"]')?.value || '');
+        const ep = routeEndpoints(rs);
+        if (!ep) return;
+        [ep.first, ep.last].forEach(tok => {
+            if (!tokenIndex.has(tok)) tokenIndex.set(tok, new Set());
+            tokenIndex.get(tok).add(row);
+        });
+    });
+
+    // Collect boundary tokens of the current visible set
+    function getBoundaryTokens(rowSet) {
+        const tokens = new Set();
+        rowSet.forEach(row => {
+            const rs = (row.querySelector('[name="routestring"]')?.value || '');
+            const ep = routeEndpoints(rs);
+            if (!ep) return;
+            // Only expand from endpoints that are NOT airports.
+            // Heuristic: ICAO airports are exactly 4 uppercase letters.
+            // (The issue says "if a route ends at an airport, stop iterating further".)
+            const isAirport = tok => /^[A-Z]{4}$/.test(tok);
+            if (!isAirport(ep.first)) tokens.add(ep.first);
+            if (!isAirport(ep.last))  tokens.add(ep.last);
+        });
+        return tokens;
+    }
+
+    if (mode === 'adjacent') {
+        const boundary = getBoundaryTokens(visible);
+        boundary.forEach(tok => {
+            const candidates = tokenIndex.get(tok) || new Set();
+            candidates.forEach(row => visible.add(row));
+        });
+    } else if (mode === 'recursive') {
+        let frontier = new Set(visible);
+        while (frontier.size > 0) {
+            const boundary = getBoundaryTokens(frontier);
+            const next = new Set();
+            boundary.forEach(tok => {
+                const candidates = tokenIndex.get(tok) || new Set();
+                candidates.forEach(row => {
+                    if (!visible.has(row)) {
+                        visible.add(row);
+                        next.add(row);
+                    }
+                });
+            });
+            frontier = next;
+        }
+    }
+
+    return visible;
+}
+
+function onConnectedModeChange() {
+    localStorage.setItem(CONNECTED_ROUTES_MODE_KEY, document.getElementById('connected-routes-mode').value);
+    saveRoutesDraftToStorage();
+    applyFilters();
+}
+
+// Restore connected-routes mode from localStorage on page load
+(function restoreConnectedModeFromStorage() {
+    const stored = localStorage.getItem(CONNECTED_ROUTES_MODE_KEY);
+    if (stored) {
+        const sel = document.getElementById('connected-routes-mode');
+        if (sel) sel.value = stored;
+    }
+})();
+
+// ---------------------------------------------------------------------------
+// Filter logic
+// ---------------------------------------------------------------------------
+
 function applyFilters() {
     const searchInput = (document.getElementById('filter-search').value || '').trim().toLowerCase();
     const rawTerms = searchInput
@@ -1937,20 +2059,21 @@ function applyFilters() {
         .map(term => term.slice(1).trim())
         .filter(Boolean);
 
+    const connectedMode = document.getElementById('connected-routes-mode')?.value || 'disabled';
+
     ensureTrailingEmptyRow();
     const rows = getRouteRows();
     rows.forEach(moveRowToSection);
     const trailingPlaceholder = rows.find(row => row.dataset.placeholder === 'true') || null;
 
-    rows.forEach(row => {
-        if (trailingPlaceholder && row === trailingPlaceholder && row.dataset.placeholder === 'true') {
-            row.style.display = '';
-            return;
-        }
+    // First pass: determine which rows match the search terms directly.
+    const directlyMatched = new Set();
+    const activeRow = rows.find(row => row.contains(document.activeElement));
 
-        // Keep the row visible while the user is actively editing it.
-        if (row.contains(document.activeElement)) {
-            row.style.display = '';
+    rows.forEach(row => {
+        // Always keep the placeholder or the actively-edited row.
+        if ((trailingPlaceholder && row === trailingPlaceholder) || row === activeRow) {
+            directlyMatched.add(row);
             return;
         }
 
@@ -1968,9 +2091,33 @@ function applyFilters() {
         const matchesExclude = !excludeTerms.some(term =>
             searchableFields.some(field => field.includes(term))
         );
-        const matchesSearch = matchesInclude && matchesExclude;
 
-        row.style.display = matchesSearch ? '' : 'none';
+        if (matchesInclude && matchesExclude) {
+            directlyMatched.add(row);
+        }
+    });
+
+    // Second pass: expand connected routes (only when a search term is active).
+    let visibleSet;
+    const hasActiveSearch = includeTerms.length > 0 || excludeTerms.length > 0;
+    if (connectedMode !== 'disabled' && hasActiveSearch) {
+        // Only seed from real filter matches, not from the placeholder/active-row exceptions.
+        const seedRows = rows.filter(row => directlyMatched.has(row) && row !== trailingPlaceholder && row !== activeRow);
+        visibleSet = expandConnectedRoutes(seedRows, rows, connectedMode);
+        // Re-add placeholder and active row.
+        if (trailingPlaceholder) visibleSet.add(trailingPlaceholder);
+        if (activeRow) visibleSet.add(activeRow);
+    } else {
+        visibleSet = directlyMatched;
+    }
+
+    // Apply visibility and mark connected rows.
+    rows.forEach(row => {
+        const isVisible = visibleSet.has(row);
+        row.style.display = isVisible ? '' : 'none';
+        // Mark rows that are shown only because of connectivity (not a direct filter match).
+        const isConnected = isVisible && !directlyMatched.has(row);
+        row.classList.toggle('route-row--connected', isConnected);
     });
 
     refreshSectionHeaders();
