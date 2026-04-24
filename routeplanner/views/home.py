@@ -46,17 +46,27 @@ def get_atlantic_fir_id(point):
             return fir["id"]
     return None
 
+NATTRAK_BOOKINGS_URL = 'https://ctp.vatsim.net/api/bookings-nattrak'
+
 def home(request):
     try:
         data = requests.get(VATSIM_DATA_URL).json()
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
+    # Fetch booked CIDs from the CTP NatTrak bookings API.
+    # Only pilots with a confirmed slot should appear in the stats.
+    try:
+        bookings_data = requests.get(NATTRAK_BOOKINGS_URL, timeout=10).json()
+        booked_cids = {int(b['user_id']) for b in bookings_data.get('data', []) if b.get('user_id')}
+    except Exception:
+        booked_cids = set()
+
     pilots = data.get('pilots', [])
     now = datetime.now(timezone.utc)
     
     stats = {
-        "global_online": len(pilots),
+        "global_online": sum(1 for p in pilots if p.get('cid') in booked_cids),
         "atlantik_schwimmer_count": 0,
         "atlantik_route_count": 0,
         "planned_oceanic_flights_count": 0,
@@ -73,6 +83,12 @@ def home(request):
     for p in pilots:
         lat, lon = p.get('latitude'), p.get('longitude')
         if lat is None or lon is None: continue
+
+        # Only include pilots with a confirmed CTP slot.
+        pilot_cid = p.get('cid')
+        has_slot = pilot_cid in booked_cids
+        if not has_slot:
+            continue
 
         punkt = Point(lon, lat)
         atlantic_fir_id = get_atlantic_fir_id(punkt)
