@@ -1874,6 +1874,11 @@ function routeEndpoints(routestring) {
 function expandConnectedRoutes(seedRows, allRows, mode) {
     const visible = new Set(seedRows);
 
+    // Helper: get the route group for a row (trimmed for comparison).
+    function getRowGroup(row) {
+        return (row.querySelector('input[name="group"]')?.value || row.dataset.originalGroup || '').trim();
+    }
+
     // Build an index: token -> [rows that start or end at that token]
     const tokenIndex = new Map(); // token (uppercase) -> Set<row>
     allRows.forEach(row => {
@@ -1886,7 +1891,7 @@ function expandConnectedRoutes(seedRows, allRows, mode) {
         });
     });
 
-    // Collect boundary tokens of the current visible set
+    // Collect boundary tokens of a row set (endpoints that are not airports).
     function getBoundaryTokens(rowSet) {
         const tokens = new Set();
         rowSet.forEach(row => {
@@ -1895,7 +1900,6 @@ function expandConnectedRoutes(seedRows, allRows, mode) {
             if (!ep) return;
             // Only expand from endpoints that are NOT airports.
             // Heuristic: ICAO airports are exactly 4 uppercase letters.
-            // (The issue says "if a route ends at an airport, stop iterating further".)
             const isAirport = tok => /^[A-Z]{4}$/.test(tok);
             if (!isAirport(ep.first)) tokens.add(ep.first);
             if (!isAirport(ep.last))  tokens.add(ep.last);
@@ -1903,24 +1907,48 @@ function expandConnectedRoutes(seedRows, allRows, mode) {
         return tokens;
     }
 
+    // Returns the set of all non-empty groups already represented in a row set.
+    // A candidate whose group is in this set should be excluded — that group is
+    // already "on this side" of the route chain and we must not reverse course.
+    function getRepresentedGroups(rowSet) {
+        const groups = new Set();
+        rowSet.forEach(row => {
+            const g = getRowGroup(row);
+            if (g) groups.add(g);
+        });
+        return groups;
+    }
+
     if (mode === 'adjacent') {
+        // Snapshot the groups already in the visible (seed) set.
+        // Any candidate whose group is already here is on the same side — skip it.
+        const representedGroups = getRepresentedGroups(visible);
         const boundary = getBoundaryTokens(visible);
         boundary.forEach(tok => {
             const candidates = tokenIndex.get(tok) || new Set();
-            candidates.forEach(row => visible.add(row));
+            candidates.forEach(row => {
+                const candidateGroup = getRowGroup(row);
+                if (candidateGroup && representedGroups.has(candidateGroup)) return;
+                visible.add(row);
+            });
         });
     } else if (mode === 'recursive') {
         let frontier = new Set(visible);
         while (frontier.size > 0) {
+            // Rebuild represented groups each iteration as the visible set grows.
+            // This prevents re-entering a group that was reached earlier via any path.
+            const representedGroups = getRepresentedGroups(visible);
             const boundary = getBoundaryTokens(frontier);
             const next = new Set();
             boundary.forEach(tok => {
                 const candidates = tokenIndex.get(tok) || new Set();
                 candidates.forEach(row => {
-                    if (!visible.has(row)) {
-                        visible.add(row);
-                        next.add(row);
-                    }
+                    if (visible.has(row)) return;
+                    const candidateGroup = getRowGroup(row);
+                    // Skip if this group is already represented in the visible set.
+                    if (candidateGroup && representedGroups.has(candidateGroup)) return;
+                    visible.add(row);
+                    next.add(row);
                 });
             });
             frontier = next;
